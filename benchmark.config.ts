@@ -1,8 +1,12 @@
+import path from 'node:path';
+
+const dataPath = (...parts: string[]) => path.join(import.meta.dir, 'data', ...parts);
+
 export const BENCHMARK_CONFIG = {
-  // Paths to parquet files
+  // Paths to parquet files (absolute, derived from repo root)
   paths: {
-    original: '/Users/yo_macbook/Documents/dev/TMP/claude_tutorial/data/original.parquet',
-    optimized: '/Users/yo_macbook/Documents/dev/TMP/claude_tutorial/data/optimized.parquet',
+    original: dataPath('original.parquet'),
+    optimized: dataPath('optimized.parquet'),
   },
 
   // Detection thresholds for performance improvements

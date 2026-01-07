@@ -21,6 +21,6 @@
     "isolatedModules": true,
     "types": ["bun-types"]
   },
-  "include": ["src/**/*"],
+  "include": ["src/**/*", "benchmark.config.ts"],
   "exclude": ["node_modules"]
 }

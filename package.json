@@ -3,9 +3,11 @@
   "version": "1.0.0",
   "type": "module",
   "scripts": {
-    "dev": "bun --watch src/index.ts",
-    "start": "bun run src/index.ts",
-    "benchmark": "bun run src/benchmark.ts"
+    "dev": "bun --watch src/dev.ts",
+    "start": "bun run src/dev.ts",
+    "cli": "bun run src/index.ts",
+    "benchmark": "bun run src/benchmark.ts",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
     "@duckdb/duckdb-wasm": "^1.29.0",
@@ -14,6 +16,7 @@
     "cli-table3": "^0.6.5"
   },
   "devDependencies": {
-    "@types/bun": "latest"
+    "@types/bun": "latest",
+    "typescript": "^5.9.3"
   }
 }
