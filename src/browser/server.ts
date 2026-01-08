@@ -4,9 +4,11 @@
  * Features:
  * - CORS (including Range header support)
  * - HTTP Range requests (206 Partial Content) for efficient parquet streaming
+ * - Static file serving for web UI
  */
 
 import { BENCHMARK_CONFIG } from '../../benchmark.config';
+import path from 'node:path';
 
 export interface BrowserServerOptions {
   port?: number;
@@ -15,6 +17,9 @@ export interface BrowserServerOptions {
 export function startBrowserServer(options?: BrowserServerOptions) {
   const port = options?.port ?? Number(process.env.PORT ?? 3000);
 
+  // Web files directory
+  const webDir = path.join(import.meta.dir, 'web');
+
   const server = Bun.serve({
     port,
     async fetch(req) {
@@ -22,6 +27,28 @@ export function startBrowserServer(options?: BrowserServerOptions) {
 
       if (req.method === 'OPTIONS') {
         return new Response(null, { status: 204, headers: corsHeaders() });
+      }
+
+      // Serve web UI files
+      if (url.pathname === '/' || url.pathname === '/index.html') {
+        const indexPath = path.join(webDir, 'index.html');
+        const file = Bun.file(indexPath);
+        if (await file.exists()) {
+          return withCors(new Response(file, {
+            headers: { 'content-type': 'text/html; charset=utf-8' }
+          }), req);
+        }
+      }
+
+      // Serve JavaScript files from web directory
+      if (url.pathname.endsWith('.js')) {
+        const jsPath = path.join(webDir, url.pathname);
+        const file = Bun.file(jsPath);
+        if (await file.exists()) {
+          return withCors(new Response(file, {
+            headers: { 'content-type': 'application/javascript; charset=utf-8' }
+          }), req);
+        }
       }
 
       if (url.pathname === '/health') {

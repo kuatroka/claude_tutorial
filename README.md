@@ -2,6 +2,19 @@
 
 A performance benchmarking application that compares **native DuckDB** (via `@duckdb/node-api` in Bun) against **browser-based DuckDB** (via `@duckdb/duckdb-wasm` in Chrome) for SEC 13F filing detection workflows.
 
+## Quick Start
+
+```bash
+# 1. Install dependencies
+bun install
+
+# 2. Generate sample data
+bun run scripts/generate-sample-data.ts
+
+# 3. Run browser benchmark (opens UI at http://localhost:3000)
+bun run main:server
+```
+
 ## Overview
 
 This benchmark answers the question: **Is browser-based SEC filing detection viable for this data processing workload?**
@@ -23,7 +36,12 @@ The application:
 ```bash
 # Install dependencies
 bun install
+
+# Generate sample parquet data files (required for first run)
+bun run scripts/generate-sample-data.ts
 ```
+
+This creates `data/original.parquet` and `data/optimized.parquet` with 1000 synthetic SEC filing records.
 
 ## Running the Application
 
@@ -112,6 +130,13 @@ claude_tutorial/
 ├── tsconfig.json             # TypeScript configuration
 ├── benchmark.config.ts       # Paths and detection thresholds
 ├── README.md                 # This file
+│
+├── data/                     # Parquet data files (generated)
+│   ├── original.parquet      # Uncompressed sample data
+│   └── optimized.parquet     # ZSTD compressed sample data
+│
+├── scripts/
+│   └── generate-sample-data.ts # Script to generate sample parquet files
 │
 ├── src/
 │   ├── main.ts               # Main CLI entry point
