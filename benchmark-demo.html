@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Browser Benchmark Demo</title>
+</head>
+<body>
+  <!-- Benchmark UI will be rendered here -->
+  <div id="benchmark-container"></div>
+
+  <!-- Load detection engine (compiled browser bundle) -->
+  <script src="src/browser/web/detection-engine-browser.js"></script>
+
+  <!-- Load benchmark UI -->
+  <script src="src/browser/web/benchmark-ui.js"></script>
+
+  <!-- Setup configuration -->
+  <script>
+    // This configuration would typically be set up by the server
+    // For demo purposes, we're showing the expected structure
+
+    // Mock file discovery (in production, this would use actual file system APIs)
+    window.fileDiscovery = {
+      async listAntigravityFiles() {
+        // Return list of antigravity parquet files
+        // In production: fetch from server or local file system
+        console.warn('Mock file discovery: No actual files available');
+        return [];
+      },
+      async listVerifiedFiles(cik) {
+        // Return list of verified files for a CIK
+        console.warn('Mock file discovery: No actual files available');
+        return [];
+      }
+    };
+
+    // Mock parquet operations (in production, use actual DuckDB-WASM)
+    window.parquetOps = {
+      async getFileStats(fileUrl) {
+        // Return file statistics
+        return {
+          value: 10000000,
+          rowCount: 100,
+          medianPricePerShare: 50.0
+        };
+      },
+      async getMarketPriceComparison(fileUrl, quarter) {
+        // Return market price comparison
+        return {
+          matchedCusips: 5,
+          totalCusips: 10,
+          totalFilerWeight: 0.8,
+          medianRatio: 1.5,
+          avgRatio: 1.6,
+          minRatio: 0.9,
+          maxRatio: 2.1,
+          needsX1000Weight: 0.3,
+          correctWeight: 0.7,
+          verdict: 'correct',
+          confidence: 0.85
+        };
+      }
+    };
+
+    // Benchmark configuration
+    window.benchmarkConfig = {
+      antigravityBaseUrl: '/data/ANTIGRAVITY_FINAL_CLEAN_SCHEMA',
+      verifiedBaseUrl: '/data/FILINGS_PARQ_MISSING_BATCH_1',
+      parquetOps: window.parquetOps
+    };
+
+    console.log('✓ Browser benchmark demo loaded');
+    console.log('Note: This is a demo with mock data. To run actual benchmarks, configure proper file discovery and parquet operations.');
+  </script>
+</body>
+</html>
