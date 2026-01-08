@@ -103,15 +103,21 @@ async function runNativeMode(options: CliOptions): Promise<void> {
  * Run server mode for browser benchmarking
  */
 async function runServerMode(options: CliOptions): Promise<void> {
-  const port = options.port ?? 3000;
+  const requestedPort = options.port ?? 3000;
 
   console.log(chalk.bold.cyan('\n🌐 Starting Browser Benchmark Server...\n'));
   console.log(chalk.white('This server provides:'));
   console.log(chalk.gray('  • HTTP server for parquet files'));
-  console.log(chalk.gray('  • Browser benchmark UI at http://localhost:' + port));
-  console.log(chalk.gray('  • CORS and Range request support\n'));
+  console.log(chalk.gray('  • Browser benchmark UI'));
+  console.log(chalk.gray('  • CORS and Range request support'));
+  console.log(chalk.gray('  • Dynamic port allocation\n'));
 
-  const server = startBrowserServer({ port });
+  const { port, portChanged } = await startBrowserServer({ port: requestedPort });
+
+  if (portChanged) {
+    console.log(chalk.yellow(`⚠️  Port ${requestedPort} was already in use`));
+    console.log(chalk.yellow(`   Using port ${port} instead\n`));
+  }
 
   console.log(chalk.bold.green('✅ Server started successfully!\n'));
   console.log(chalk.yellow('📝 Manual Browser Benchmark Process:'));

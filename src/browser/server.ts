@@ -6,6 +6,7 @@
  * - HTTP Range requests (206 Partial Content) for efficient parquet streaming
  * - Static file serving for web UI
  * - API endpoints for file listing
+ * - Dynamic port allocation (finds available port if preferred is taken)
  */
 
 import { BENCHMARK_CONFIG } from '../../benchmark.config';
@@ -14,10 +15,60 @@ import path from 'node:path';
 
 export interface BrowserServerOptions {
   port?: number;
+  maxPortAttempts?: number;
 }
 
-export function startBrowserServer(options?: BrowserServerOptions) {
-  const port = options?.port ?? BENCHMARK_CONFIG.server.port;
+export interface ServerStartResult {
+  server: ReturnType<typeof Bun.serve>;
+  port: number;
+  requestedPort: number;
+  portChanged: boolean;
+}
+
+/**
+ * Check if a port is available by attempting to create a temporary server
+ */
+async function isPortAvailable(port: number): Promise<boolean> {
+  try {
+    const testServer = Bun.serve({
+      port,
+      fetch() {
+        return new Response('test');
+      },
+    });
+    testServer.stop();
+    return true;
+  } catch (error) {
+    return false;
+  }
+}
+
+/**
+ * Find an available port starting from the preferred port
+ */
+async function findAvailablePort(
+  preferredPort: number,
+  maxAttempts: number = 10
+): Promise<number> {
+  for (let i = 0; i < maxAttempts; i++) {
+    const portToTry = preferredPort + i;
+    if (await isPortAvailable(portToTry)) {
+      return portToTry;
+    }
+  }
+  throw new Error(
+    `Could not find available port after ${maxAttempts} attempts (tried ${preferredPort}-${preferredPort + maxAttempts - 1})`
+  );
+}
+
+export async function startBrowserServer(
+  options?: BrowserServerOptions
+): Promise<ServerStartResult> {
+  const requestedPort = options?.port ?? BENCHMARK_CONFIG.server.port;
+  const maxAttempts = options?.maxPortAttempts ?? 10;
+
+  // Find an available port
+  const port = await findAvailablePort(requestedPort, maxAttempts);
 
   // Web files directory
   const webDir = path.join(import.meta.dir, 'web');
@@ -103,12 +154,23 @@ export function startBrowserServer(options?: BrowserServerOptions) {
     },
   });
 
-  return server;
+  return {
+    server,
+    port,
+    requestedPort,
+    portChanged: port !== requestedPort,
+  };
 }
 
 if (import.meta.main) {
-  const server = startBrowserServer();
-  console.log(`Browser parquet server listening on http://localhost:${server.port}`);
+  startBrowserServer().then(({ port, requestedPort, portChanged }) => {
+    if (portChanged) {
+      console.log(
+        `Port ${requestedPort} was in use, using port ${port} instead`
+      );
+    }
+    console.log(`Browser parquet server listening on http://localhost:${port}`);
+  });
 }
 
 function withCors(res: Response, _req: Request): Response {
