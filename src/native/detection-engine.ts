@@ -17,16 +17,12 @@ import { parseFilename, quarterToSortKey } from '../shared/parquet-utils-base';
 import { calculateReferenceData, evaluateFile } from '../shared/detection-logic';
 import { getFileStats, getMarketPriceComparison } from './parquet-ops';
 
-// Configuration for file paths
+import { BENCHMARK_CONFIG } from '../../benchmark.config';
+
+// Configuration for file paths - use real data from filings_1000x_solution
 export const CONFIG = {
-  ANTIGRAVITY_SOURCE: path.join(
-    import.meta.dir,
-    '../../data/ANTIGRAVITY_FINAL_CLEAN_SCHEMA'
-  ),
-  FILINGS_PARQ_MISSING: path.join(
-    import.meta.dir,
-    '../../data/FILINGS_PARQ_MISSING_BATCH_1'
-  ),
+  ANTIGRAVITY_SOURCE: BENCHMARK_CONFIG.paths.ANTIGRAVITY_SOURCE,
+  FILINGS_PARQ_MISSING: BENCHMARK_CONFIG.paths.VERIFIED_FILINGS,
 };
 
 /**

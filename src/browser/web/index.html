@@ -3,14 +3,12 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>DuckDB Benchmark - Browser</title>
+  <title>SEC 13F Detection Benchmark - Browser</title>
   <style>
-    * {
-      box-sizing: border-box;
-    }
+    * { box-sizing: border-box; }
     body {
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
-      max-width: 900px;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      max-width: 1000px;
       margin: 0 auto;
       padding: 20px;
       background: #f5f5f5;
@@ -37,6 +35,7 @@
     .status.loading { background: #f39c12; color: white; }
     .status.ready { background: #27ae60; color: white; }
     .status.error { background: #e74c3c; color: white; }
+    .status.running { background: #3498db; color: white; }
     button {
       background: #3498db;
       color: white;
@@ -48,94 +47,138 @@
       margin-right: 10px;
       margin-bottom: 10px;
     }
-    button:hover {
-      background: #2980b9;
-    }
-    button:disabled {
-      background: #bdc3c7;
-      cursor: not-allowed;
-    }
+    button:hover { background: #2980b9; }
+    button:disabled { background: #bdc3c7; cursor: not-allowed; }
     pre {
       background: #2c3e50;
       color: #ecf0f1;
       padding: 15px;
       border-radius: 4px;
       overflow-x: auto;
-      font-size: 13px;
+      font-size: 12px;
       line-height: 1.4;
-    }
-    .timing {
-      font-family: monospace;
-      color: #27ae60;
-    }
-    #log {
       max-height: 400px;
       overflow-y: auto;
     }
+    #log {
+      max-height: 300px;
+      overflow-y: auto;
+    }
     .log-entry {
-      padding: 5px 0;
+      padding: 3px 0;
       border-bottom: 1px solid #eee;
+      font-size: 13px;
     }
-    .log-entry.error {
-      color: #e74c3c;
+    .log-entry.error { color: #e74c3c; }
+    .log-entry.success { color: #27ae60; }
+    .stats {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 15px;
+      margin: 15px 0;
     }
-    .log-entry.success {
-      color: #27ae60;
+    .stat-box {
+      background: #ecf0f1;
+      padding: 15px;
+      border-radius: 6px;
+      text-align: center;
+    }
+    .stat-value { font-size: 24px; font-weight: bold; color: #2c3e50; }
+    .stat-label { font-size: 12px; color: #7f8c8d; margin-top: 5px; }
+    .progress-bar {
+      width: 100%;
+      height: 20px;
+      background: #ecf0f1;
+      border-radius: 10px;
+      overflow: hidden;
+      margin: 10px 0;
+    }
+    .progress-fill {
+      height: 100%;
+      background: linear-gradient(90deg, #3498db, #27ae60);
+      transition: width 0.3s;
     }
   </style>
 </head>
 <body>
-  <h1>DuckDB Benchmark - Browser</h1>
+  <h1>SEC 13F Detection Benchmark - Browser (DuckDB-WASM)</h1>
 
   <div class="card">
-    <h2>DuckDB-WASM Status</h2>
-    <p>Status: <span id="status" class="status loading">Initializing...</span></p>
+    <h2>Status</h2>
+    <p>DuckDB: <span id="status" class="status loading">Initializing...</span></p>
     <p>Version: <span id="version">-</span></p>
+    <p>Data: <span id="data-status">-</span></p>
   </div>
 
   <div class="card">
-    <h2>Query Parquet Files</h2>
-    <p>Query parquet files served from the local HTTP server via DuckDB-WASM.</p>
-    <p><strong>Note:</strong> DuckDB-WASM has built-in HTTP support for reading remote parquet files.</p>
+    <h2>Benchmark Controls</h2>
+    <p>Test detection engine performance using DuckDB-WASM with HTTP parquet access.</p>
     <div>
-      <button id="btn-original" disabled>Query Original Parquet</button>
-      <button id="btn-optimized" disabled>Query Optimized Parquet</button>
-      <button id="btn-benchmark" disabled>Run Benchmark</button>
+      <button id="btn-test" disabled>Test Single File</button>
+      <button id="btn-benchmark" disabled>Run Full Benchmark (5 CIKs)</button>
+    </div>
+    <div class="progress-bar" id="progress-container" style="display:none;">
+      <div class="progress-fill" id="progress-fill" style="width:0%"></div>
+    </div>
+    <p id="progress-text" style="display:none;"></p>
+  </div>
+
+  <div class="card">
+    <h2>Results Summary</h2>
+    <div class="stats">
+      <div class="stat-box">
+        <div class="stat-value" id="stat-files">-</div>
+        <div class="stat-label">Files Processed</div>
+      </div>
+      <div class="stat-box">
+        <div class="stat-value" id="stat-duration">-</div>
+        <div class="stat-label">Duration (s)</div>
+      </div>
+      <div class="stat-box">
+        <div class="stat-value" id="stat-throughput">-</div>
+        <div class="stat-label">Files/sec</div>
+      </div>
     </div>
   </div>
 
   <div class="card">
-    <h2>Results</h2>
+    <h2>Log</h2>
     <div id="log">
       <div class="log-entry">Waiting for DuckDB initialization...</div>
     </div>
   </div>
 
   <div class="card">
-    <h2>Query Output</h2>
-    <pre id="output">No query executed yet.</pre>
+    <h2>Benchmark Results</h2>
+    <pre id="output">No benchmark run yet.</pre>
   </div>
 
-  <!-- Load DuckDB-WASM from CDN -->
   <script type="module">
-    // Import DuckDB-WASM from CDN
     import * as duckdb from 'https://cdn.jsdelivr.net/npm/@duckdb/duckdb-wasm@1.29.0/+esm';
 
-    // Server URL (adjust if server runs on different port)
     const SERVER_URL = 'http://localhost:3000';
 
     // DOM elements
     const statusEl = document.getElementById('status');
     const versionEl = document.getElementById('version');
+    const dataStatusEl = document.getElementById('data-status');
     const logEl = document.getElementById('log');
     const outputEl = document.getElementById('output');
-    const btnOriginal = document.getElementById('btn-original');
-    const btnOptimized = document.getElementById('btn-optimized');
+    const btnTest = document.getElementById('btn-test');
     const btnBenchmark = document.getElementById('btn-benchmark');
+    const progressContainer = document.getElementById('progress-container');
+    const progressFill = document.getElementById('progress-fill');
+    const progressText = document.getElementById('progress-text');
+    const statFiles = document.getElementById('stat-files');
+    const statDuration = document.getElementById('stat-duration');
+    const statThroughput = document.getElementById('stat-throughput');
 
-    // Global DuckDB instance
     let db = null;
     let conn = null;
+    let antigravityFiles = [];
+
+    // Expose results globally for Claude to extract
+    window.benchmarkResults = null;
 
     function log(message, type = 'info') {
       const entry = document.createElement('div');
@@ -154,21 +197,22 @@
       outputEl.textContent = typeof content === 'string' ? content : JSON.stringify(content, null, 2);
     }
 
+    function updateProgress(current, total, message) {
+      const pct = (current / total * 100).toFixed(1);
+      progressFill.style.width = `${pct}%`;
+      progressText.textContent = message || `${current}/${total} (${pct}%)`;
+    }
+
     async function initDuckDB() {
       try {
         log('Loading DuckDB-WASM bundles...');
-
-        // Select appropriate bundle for the browser
         const JSDELIVR_BUNDLES = duckdb.getJsDelivrBundles();
         const bundle = await duckdb.selectBundle(JSDELIVR_BUNDLES);
-
         log(`Selected bundle: ${bundle.mainModule}`);
 
-        // Create worker and instantiate DuckDB
         const worker_url = URL.createObjectURL(
           new Blob([`importScripts("${bundle.mainWorker}");`], { type: 'text/javascript' })
         );
-
         const worker = new Worker(worker_url);
         const logger = new duckdb.ConsoleLogger();
         db = new duckdb.AsyncDuckDB(logger, worker);
@@ -176,7 +220,6 @@
         await db.instantiate(bundle.mainModule, bundle.pthreadWorker);
         URL.revokeObjectURL(worker_url);
 
-        // Get version
         conn = await db.connect();
         const versionResult = await conn.query('SELECT version() as version');
         const version = versionResult.toArray()[0].version;
@@ -185,9 +228,10 @@
         setStatus('Ready', 'ready');
         log(`DuckDB-WASM initialized. Version: ${version}`, 'success');
 
-        // Enable buttons
-        btnOriginal.disabled = false;
-        btnOptimized.disabled = false;
+        // Load file list
+        await loadFileList();
+
+        btnTest.disabled = false;
         btnBenchmark.disabled = false;
 
       } catch (error) {
@@ -197,132 +241,151 @@
       }
     }
 
-    async function queryParquetFile(filename) {
-      if (!conn) {
-        log('DuckDB not initialized', 'error');
-        return null;
+    async function loadFileList() {
+      try {
+        const response = await fetch(`${SERVER_URL}/api/files/antigravity`);
+        const data = await response.json();
+        antigravityFiles = data.files || [];
+        dataStatusEl.textContent = `${antigravityFiles.length} antigravity files available`;
+        log(`Loaded ${antigravityFiles.length} antigravity files`, 'success');
+      } catch (e) {
+        dataStatusEl.textContent = 'Failed to load file list';
+        log(`Failed to load file list: ${e.message}`, 'error');
+      }
+    }
+
+    async function getFileStats(url) {
+      const result = await conn.query(`
+        SELECT
+          COALESCE(SUM(value), 0) as total_value,
+          COUNT(*) as row_count,
+          MEDIAN(CASE WHEN shares > 0 THEN CAST(value AS DOUBLE) / shares ELSE NULL END) as median_price_per_share
+        FROM read_parquet('${url}')
+      `);
+      const row = result.toArray()[0];
+      return {
+        value: Number(row.total_value),
+        rowCount: Number(row.row_count),
+        medianPricePerShare: row.median_price_per_share != null ? Number(row.median_price_per_share) : null
+      };
+    }
+
+    async function testSingleFile() {
+      if (!conn || antigravityFiles.length === 0) {
+        log('Not ready', 'error');
+        return;
       }
 
-      const url = `${SERVER_URL}/files/${filename}`;
-      log(`Querying ${url}...`);
+      const filename = antigravityFiles[0];
+      const url = `${SERVER_URL}/data/antigravity/${filename}`;
+      log(`Testing: ${filename}...`);
 
       const startTime = performance.now();
-
       try {
-        // DuckDB-WASM has built-in HTTP support - no httpfs extension needed
-        const result = await conn.query(`
-          SELECT
-            COUNT(*) as row_count,
-            COALESCE(SUM(value), 0) as total_value,
-            MEDIAN(CASE WHEN shares > 0 THEN CAST(value AS DOUBLE) / shares ELSE NULL END) as median_price_per_share
-          FROM read_parquet('${url}')
-        `);
-
-        const endTime = performance.now();
-        const duration = (endTime - startTime).toFixed(2);
-
-        const rows = result.toArray();
-        const data = rows.length > 0 ? {
-          rowCount: Number(rows[0].row_count),
-          totalValue: Number(rows[0].total_value),
-          medianPricePerShare: rows[0].median_price_per_share != null
-            ? Number(rows[0].median_price_per_share)
-            : null
-        } : null;
-
-        log(`Query completed in ${duration}ms`, 'success');
-        setOutput({
-          file: filename,
-          durationMs: parseFloat(duration),
-          result: data
-        });
-
-        return { duration: parseFloat(duration), data };
-
-      } catch (error) {
-        const endTime = performance.now();
-        const duration = (endTime - startTime).toFixed(2);
-        log(`Query failed after ${duration}ms: ${error.message}`, 'error');
-        setOutput({ error: error.message });
-        return null;
+        const stats = await getFileStats(url);
+        const duration = performance.now() - startTime;
+        log(`Completed in ${duration.toFixed(2)}ms: ${stats.rowCount} rows, value=${stats.value}`, 'success');
+        setOutput({ filename, durationMs: duration, stats });
+      } catch (e) {
+        log(`Failed: ${e.message}`, 'error');
       }
     }
 
     async function runBenchmark() {
-      if (!conn) {
-        log('DuckDB not initialized', 'error');
+      if (!conn || antigravityFiles.length === 0) {
+        log('Not ready', 'error');
         return;
       }
 
-      log('Starting benchmark...');
+      btnTest.disabled = true;
       btnBenchmark.disabled = true;
+      setStatus('Running', 'running');
+      progressContainer.style.display = 'block';
+      progressText.style.display = 'block';
 
-      const results = {
-        warmup: [],
-        measurements: []
-      };
+      // Group files by CIK
+      const cikMap = new Map();
+      for (const f of antigravityFiles) {
+        const cik = parseInt(f.split('-')[0]);
+        if (!cikMap.has(cik)) cikMap.set(cik, []);
+        cikMap.get(cik).push(f);
+      }
+      const ciks = Array.from(cikMap.keys()).sort((a, b) => a - b);
 
-      // Warmup runs (3 iterations)
-      log('Running warmup (3 iterations)...');
-      for (let i = 0; i < 3; i++) {
-        const r = await queryParquetFile('original.parquet');
-        if (r) results.warmup.push(r.duration);
+      // Process first 5 CIKs for demo
+      const testCiks = ciks.slice(0, 5);
+      log(`Running benchmark on ${testCiks.length} CIKs...`);
+
+      const startTime = performance.now();
+      const results = [];
+      let filesProcessed = 0;
+      let totalRows = 0;
+
+      for (let i = 0; i < testCiks.length; i++) {
+        const cik = testCiks[i];
+        const files = cikMap.get(cik);
+        log(`Processing CIK ${cik} (${files.length} files)...`);
+
+        for (const filename of files) {
+          const url = `${SERVER_URL}/data/antigravity/${filename}`;
+          try {
+            const fileStart = performance.now();
+            const stats = await getFileStats(url);
+            const duration = performance.now() - fileStart;
+
+            results.push({
+              filename,
+              cik,
+              durationMs: duration,
+              rowCount: stats.rowCount,
+              value: stats.value
+            });
+
+            filesProcessed++;
+            totalRows += stats.rowCount;
+            updateProgress(filesProcessed, testCiks.reduce((sum, c) => sum + cikMap.get(c).length, 0),
+              `${filesProcessed} files (CIK ${cik})`);
+          } catch (e) {
+            log(`Error on ${filename}: ${e.message}`, 'error');
+          }
+        }
       }
 
-      // Measurement runs (5 iterations each)
-      log('Running measurements (5 iterations per file)...');
+      const totalDuration = performance.now() - startTime;
+      const throughput = filesProcessed / (totalDuration / 1000);
 
-      const originalTimes = [];
-      const optimizedTimes = [];
-
-      for (let i = 0; i < 5; i++) {
-        const origResult = await queryParquetFile('original.parquet');
-        if (origResult) originalTimes.push(origResult.duration);
-
-        const optResult = await queryParquetFile('optimized.parquet');
-        if (optResult) optimizedTimes.push(optResult.duration);
-      }
-
-      // Calculate statistics
-      const calcStats = (times) => {
-        if (times.length === 0) return null;
-        const sorted = [...times].sort((a, b) => a - b);
-        const sum = sorted.reduce((a, b) => a + b, 0);
-        return {
-          min: sorted[0],
-          max: sorted[sorted.length - 1],
-          mean: sum / sorted.length,
-          median: sorted[Math.floor(sorted.length / 2)],
-          count: sorted.length
-        };
-      };
+      // Update stats
+      statFiles.textContent = filesProcessed;
+      statDuration.textContent = (totalDuration / 1000).toFixed(2);
+      statThroughput.textContent = throughput.toFixed(2);
 
       const benchmarkResults = {
-        warmup: {
-          runs: results.warmup.length,
-          times: results.warmup
-        },
-        original: calcStats(originalTimes),
-        optimized: calcStats(optimizedTimes),
-        speedup: null
+        timestamp: new Date().toISOString(),
+        platform: 'browser',
+        ciks: testCiks.length,
+        totalFiles: filesProcessed,
+        totalRows,
+        totalDurationMs: totalDuration,
+        throughputFilesPerSec: throughput,
+        results
       };
 
-      if (benchmarkResults.original && benchmarkResults.optimized) {
-        benchmarkResults.speedup = benchmarkResults.original.median / benchmarkResults.optimized.median;
-      }
-
-      log('Benchmark complete!', 'success');
+      window.benchmarkResults = benchmarkResults;
       setOutput(benchmarkResults);
+      log(`Benchmark complete! ${filesProcessed} files in ${(totalDuration/1000).toFixed(2)}s`, 'success');
 
+      setStatus('Ready', 'ready');
+      progressContainer.style.display = 'none';
+      progressText.style.display = 'none';
+      btnTest.disabled = false;
       btnBenchmark.disabled = false;
     }
 
     // Event listeners
-    btnOriginal.addEventListener('click', () => queryParquetFile('original.parquet'));
-    btnOptimized.addEventListener('click', () => queryParquetFile('optimized.parquet'));
+    btnTest.addEventListener('click', testSingleFile);
     btnBenchmark.addEventListener('click', runBenchmark);
 
-    // Initialize on load
+    // Initialize
     initDuckDB();
   </script>
 </body>

@@ -8,11 +8,12 @@ A performance benchmarking application that compares **native DuckDB** (via `@du
 # 1. Install dependencies
 bun install
 
-# 2. Generate sample data
-bun run scripts/generate-sample-data.ts
+# 2. Run native benchmark (processes all 960 SEC filing files)
+bun run main:native
 
 # 3. Run browser benchmark (opens UI at http://localhost:3000)
 bun run main:server
+# Then open http://localhost:3000 in Chrome and click "Run Full Benchmark"
 ```
 
 ## Overview
@@ -20,28 +21,40 @@ bun run main:server
 This benchmark answers the question: **Is browser-based SEC filing detection viable for this data processing workload?**
 
 The application:
-- Analyzes SEC filing data (parquet files) to detect whether values need a 1000x correction
-- Compares files against verified baseline data using a weighted voting algorithm
+- Analyzes **960 antigravity parquet files** against **22,028 verified filings**
+- Detects whether SEC 13F values need a 1000x correction using a weighted voting algorithm
+- Compares file prices against market median prices per CUSIP
 - Measures performance across native and browser environments
 - Generates comparison reports with timing breakdowns
 
 ## Prerequisites
 
 - **Bun** (v1.0+) - JavaScript runtime and package manager
-- **Node.js** (v18+) - For some dependencies
-- Chrome/Chromium browser (for browser benchmarks)
+- **Chrome/Chromium browser** (for browser benchmarks)
+- **SEC Filing Data** - Real parquet files from `filings_1000x_solution` dataset
+
+## Data Requirements
+
+The benchmark expects real SEC filing data at these paths (configured in `benchmark.config.ts`):
+
+```
+filings_1000x_solution/data/
+├── ANTIGRAVITY_FINAL_CLEAN_SCHEMA/    # 960 antigravity parquet files
+└── FILINGS_PARQ_MISSING_BATCH_1/      # 22,028 verified filing files
+
+MASTER_DATA/MD_02_CUSIP/
+└── MD_02_CONSO_MEDIAN_PRICES_SPLITS/
+    └── MD_02_CONSO_MEDIAN_PRICES_SPLITS_FILE.parquet  # Market prices
+```
+
+Update `benchmark.config.ts` if your data is located elsewhere.
 
 ## Installation
 
 ```bash
 # Install dependencies
 bun install
-
-# Generate sample parquet data files (required for first run)
-bun run scripts/generate-sample-data.ts
 ```
-
-This creates `data/original.parquet` and `data/optimized.parquet` with 1000 synthetic SEC filing records.
 
 ## Running the Application
 
@@ -60,6 +73,27 @@ bun run src/main.ts --mode=native
 
 # With custom warmup CIKs
 bun run src/main.ts --mode=native --warmup=5
+```
+
+**Output:**
+```
+Native Benchmark Configuration
+   Antigravity source: .../ANTIGRAVITY_FINAL_CLEAN_SCHEMA
+   Verified filings: .../FILINGS_PARQ_MISSING_BATCH_1
+   Total CIKs available: 235
+   Warmup phase: 5 CIKs (results discarded)
+   Measurement phase: 230 CIKs
+
+Benchmark Complete!
+   Files processed: 943
+   Total rows: 177241
+   Duration: 17187.87ms
+   Throughput: 54.86 files/sec
+
+Detection Results:
+   needs-x1000: 0
+   correct: 943
+   unclear: 0
 ```
 
 Results are saved to `results/native-{timestamp}.json`.
@@ -81,10 +115,15 @@ bun run src/main.ts --mode=server --port=3000
 
 Then:
 1. Open http://localhost:3000 in Chrome
-2. Click "Run Benchmark" button
-3. Wait for completion
-4. Extract `window.benchmarkResults` from browser console
-5. Save JSON to `results/browser-{timestamp}.json`
+2. Wait for DuckDB-WASM to initialize (status shows "Ready")
+3. Click "Test Single File" to verify connectivity
+4. Click "Run Full Benchmark (5 CIKs)" to run the browser benchmark
+5. Results display in the UI and are available via `window.benchmarkResults`
+
+**Browser UI Features:**
+- Real-time progress bar and log
+- Statistics summary (files processed, duration, throughput)
+- Full JSON results export
 
 ### 3. Compare Results
 
@@ -131,13 +170,6 @@ claude_tutorial/
 ├── benchmark.config.ts       # Paths and detection thresholds
 ├── README.md                 # This file
 │
-├── data/                     # Parquet data files (generated)
-│   ├── original.parquet      # Uncompressed sample data
-│   └── optimized.parquet     # ZSTD compressed sample data
-│
-├── scripts/
-│   └── generate-sample-data.ts # Script to generate sample parquet files
-│
 ├── src/
 │   ├── main.ts               # Main CLI entry point
 │   │
@@ -157,9 +189,7 @@ claude_tutorial/
 │   ├── browser/              # Browser implementation (Chrome + WASM)
 │   │   ├── server.ts         # HTTP server with CORS + Range support
 │   │   └── web/
-│   │       ├── index.html    # Benchmark UI
-│   │       ├── benchmark-ui.js
-│   │       └── detection-engine-browser.js
+│   │       └── index.html    # Benchmark UI with DuckDB-WASM
 │   │
 │   └── benchmark/            # Benchmark infrastructure
 │       ├── timer.ts          # Precision timing utilities
@@ -176,22 +206,58 @@ claude_tutorial/
 ## Configuration
 
 Edit `benchmark.config.ts` to customize:
-- Data file paths
-- Detection thresholds
-- Warmup/benchmark run counts
+
+```typescript
+export const BENCHMARK_CONFIG = {
+  paths: {
+    ANTIGRAVITY_SOURCE: '/path/to/ANTIGRAVITY_FINAL_CLEAN_SCHEMA',
+    VERIFIED_FILINGS: '/path/to/FILINGS_PARQ_MISSING_BATCH_1',
+    MARKET_PRICES: '/path/to/MD_02_CONSO_MEDIAN_PRICES_SPLITS_FILE.parquet',
+  },
+  detection: {
+    NEEDS_X1000_THRESHOLD: 0.7,  // 70% weighted vote threshold
+    // ... other thresholds
+  },
+  settings: {
+    warmupCiks: 5,       // CIKs to warm up before measurement
+    benchmarkRuns: 10,   // Number of benchmark iterations
+  },
+  server: {
+    port: 3000,          // HTTP server port for browser benchmark
+  },
+} as const;
+```
+
+## Detection Algorithm
+
+The detection engine determines if SEC 13F filing values need a 1000x correction by:
+
+1. **File Stats**: Calculate total value, row count, and median price per share
+2. **Market Comparison**: Compare CUSIP prices against market median prices
+3. **Weighted Voting**: Use filer count weights to determine verdict
+   - `needs-x1000`: Ratio between 0.0003 and 0.003 (values are 1000x too small)
+   - `correct`: Ratio between 0.1 and 10 (values are correct)
+   - `unclear`: Insufficient data or mixed signals
 
 ## Technology Stack
 
 - **Runtime**: Bun
 - **Native DuckDB**: @duckdb/node-api
-- **Browser DuckDB**: @duckdb/duckdb-wasm
+- **Browser DuckDB**: @duckdb/duckdb-wasm (loaded via CDN)
 - **Output Formatting**: chalk, cli-table3
 - **Language**: TypeScript
 
-## Expected Performance
+## Performance Results
+
+Typical results on Apple Silicon (M-series):
+
+| Platform | Files | Duration | Throughput |
+|----------|-------|----------|------------|
+| Native (Bun + DuckDB) | 943 | ~17s | ~55 files/sec |
+| Browser (Chrome + WASM) | 17 (5 CIKs) | ~0.6s | ~27 files/sec |
 
 - **Native**: Faster due to direct filesystem access and native code execution
-- **Browser**: Slower due to HTTP overhead and WASM compilation, but measures real-world browser viability
+- **Browser**: Slower per-file due to HTTP overhead and WASM, but demonstrates browser viability
 
 ## License
 

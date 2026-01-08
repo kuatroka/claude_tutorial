@@ -1,15 +1,15 @@
 /**
  * Native Benchmark Runner
  *
- * Runs a simple parquet file benchmark with warmup and measurement phases.
- * Queries sample parquet files using native DuckDB.
+ * Runs the detection engine benchmark with warmup and measurement phases.
+ * Processes 960 antigravity files against 22,028 verified filings.
  * Exports metrics as JSON to results/native-{timestamp}.json
  */
 
-import { writeFileSync, mkdirSync, existsSync } from 'node:fs';
+import { writeFileSync, mkdirSync } from 'node:fs';
 import path from 'node:path';
+import { DetectionEngine } from './detection-engine';
 import { BenchmarkMetricsCollector } from '../benchmark/metrics';
-import { DuckDBNodeAdapter } from './duckdb-adapter';
 import { BENCHMARK_CONFIG } from '../../benchmark.config';
 import type { FileEvaluation } from '../shared/types';
 
@@ -26,72 +26,11 @@ export interface BenchmarkResult {
   totalFiles: number;
   metrics: ReturnType<BenchmarkMetricsCollector['stop']>;
   evaluations: FileEvaluation[];
-  // Simple benchmark specific fields
-  warmup?: { runs: number; times: number[] };
-  original?: { min: number; max: number; mean: number; median: number; count: number };
-  optimized?: { min: number; max: number; mean: number; median: number; count: number };
-  speedup?: number | null;
-}
-
-interface QueryResult {
-  rowCount: number;
-  totalValue: number;
-  medianPricePerShare: number | null;
-  durationMs: number;
-}
-
-/**
- * Query a parquet file and return stats
- */
-async function queryParquetFile(db: DuckDBNodeAdapter, filePath: string): Promise<QueryResult> {
-  const startTime = performance.now();
-
-  const result = await db.query<{
-    row_count: number | bigint;
-    total_value: number | bigint | null;
-    median_price_per_share: number | null;
-  }>(`
-    SELECT
-      COUNT(*) as row_count,
-      COALESCE(SUM(value), 0) as total_value,
-      MEDIAN(CASE WHEN shares > 0 THEN CAST(value AS DOUBLE) / shares ELSE NULL END) as median_price_per_share
-    FROM read_parquet('${filePath}')
-  `);
-
-  const endTime = performance.now();
-
-  if (result.length === 0) {
-    return {
-      rowCount: 0,
-      totalValue: 0,
-      medianPricePerShare: null,
-      durationMs: endTime - startTime,
-    };
-  }
-
-  return {
-    rowCount: Number(result[0].row_count),
-    totalValue: Number(result[0].total_value),
-    medianPricePerShare: result[0].median_price_per_share != null
-      ? Number(result[0].median_price_per_share)
-      : null,
-    durationMs: endTime - startTime,
-  };
-}
-
-/**
- * Calculate statistics for an array of times
- */
-function calcStats(times: number[]): { min: number; max: number; mean: number; median: number; count: number } | null {
-  if (times.length === 0) return null;
-  const sorted = [...times].sort((a, b) => a - b);
-  const sum = sorted.reduce((a, b) => a + b, 0);
-  return {
-    min: sorted[0],
-    max: sorted[sorted.length - 1],
-    mean: sum / sorted.length,
-    median: sorted[Math.floor(sorted.length / 2)],
-    count: sorted.length,
+  // Detection results summary
+  detectionResults?: {
+    needsX1000: number;
+    correct: number;
+    unclear: number;
   };
 }
 
@@ -99,81 +38,70 @@ function calcStats(times: number[]): { min: number; max: number; mean: number; m
  * Run native benchmark with warmup and measurement phases
  */
 export async function runNativeBenchmark(options: BenchmarkOptions = {}): Promise<BenchmarkResult> {
-  const warmupRuns = options.warmupCiks ?? 3;
-  const measurementRuns = 5;
+  const warmupCiks = options.warmupCiks ?? BENCHMARK_CONFIG.settings.warmupCiks;
   const outputDir = options.outputDir ?? path.join(import.meta.dir, '../../results');
 
   // Ensure results directory exists
   mkdirSync(outputDir, { recursive: true });
 
-  const db = new DuckDBNodeAdapter();
-  const originalPath = BENCHMARK_CONFIG.paths.original;
-  const optimizedPath = BENCHMARK_CONFIG.paths.optimized;
-
-  // Check if data files exist
-  if (!existsSync(originalPath)) {
-    throw new Error(
-      `Data file not found: ${originalPath}\n` +
-      `Run 'bun run scripts/generate-sample-data.ts' to generate sample data.`
-    );
-  }
-  if (!existsSync(optimizedPath)) {
-    throw new Error(
-      `Data file not found: ${optimizedPath}\n` +
-      `Run 'bun run scripts/generate-sample-data.ts' to generate sample data.`
-    );
-  }
+  const engine = new DetectionEngine();
+  const allCiks = Array.from(engine.getAllCiks().keys()).sort((a, b) => a - b);
 
   console.log(`\n🔧 Native Benchmark Configuration`);
-  console.log(`   Original file: ${originalPath}`);
-  console.log(`   Optimized file: ${optimizedPath}`);
-  console.log(`   Warmup runs: ${warmupRuns}`);
-  console.log(`   Measurement runs: ${measurementRuns} per file\n`);
+  console.log(`   Antigravity source: ${BENCHMARK_CONFIG.paths.ANTIGRAVITY_SOURCE}`);
+  console.log(`   Verified filings: ${BENCHMARK_CONFIG.paths.VERIFIED_FILINGS}`);
+  console.log(`   Market prices: ${BENCHMARK_CONFIG.paths.MARKET_PRICES}`);
+  console.log(`   Total CIKs available: ${allCiks.length}`);
+  console.log(`   Warmup phase: ${warmupCiks} CIKs (results discarded)`);
+  console.log(`   Measurement phase: ${allCiks.length - warmupCiks} CIKs\n`);
 
   // Phase 1: Warmup (results discarded)
-  console.log(`🔥 Warmup Phase: ${warmupRuns} queries...`);
-  const warmupTimes: number[] = [];
-  for (let i = 0; i < warmupRuns; i++) {
-    const result = await queryParquetFile(db, originalPath);
-    warmupTimes.push(result.durationMs);
-    console.log(`   Warmup ${i + 1}: ${result.durationMs.toFixed(2)}ms`);
+  console.log(`🔥 Warmup Phase: Processing ${warmupCiks} CIKs...`);
+  const warmupCikList = allCiks.slice(0, warmupCiks);
+  for (let i = 0; i < warmupCikList.length; i++) {
+    const cik = warmupCikList[i];
+    await engine.evaluateCik(cik);
+    console.log(`   Warmup ${i + 1}/${warmupCiks}: CIK ${cik}`);
   }
   console.log(`✅ Warmup complete\n`);
 
   // Phase 2: Measurement
-  console.log(`📊 Measurement Phase: ${measurementRuns} iterations per file...`);
+  const measurementCikList = allCiks.slice(warmupCiks);
+  console.log(`📊 Measurement Phase: Processing ${measurementCikList.length} CIKs...`);
 
   const collector = new BenchmarkMetricsCollector();
   collector.start();
 
-  const originalTimes: number[] = [];
-  const optimizedTimes: number[] = [];
+  const allEvaluations: FileEvaluation[] = [];
+  let filesProcessed = 0;
   let totalRows = 0;
 
-  for (let i = 0; i < measurementRuns; i++) {
-    // Query original
-    const origResult = await collector.timeAsync(
-      ['benchmark', 'queryOriginal'],
-      async () => queryParquetFile(db, originalPath),
-      { file: 'original.parquet' }
-    );
-    originalTimes.push(origResult.durationMs);
-    totalRows += origResult.rowCount;
-    collector.addFiles(1);
-    collector.addRows(origResult.rowCount);
-    console.log(`   Original  ${i + 1}: ${origResult.durationMs.toFixed(2)}ms (${origResult.rowCount} rows)`);
+  for (let i = 0; i < measurementCikList.length; i++) {
+    const cik = measurementCikList[i];
 
-    // Query optimized
-    const optResult = await collector.timeAsync(
-      ['benchmark', 'queryOptimized'],
-      async () => queryParquetFile(db, optimizedPath),
-      { file: 'optimized.parquet' }
-    );
-    optimizedTimes.push(optResult.durationMs);
-    totalRows += optResult.rowCount;
-    collector.addFiles(1);
-    collector.addRows(optResult.rowCount);
-    console.log(`   Optimized ${i + 1}: ${optResult.durationMs.toFixed(2)}ms (${optResult.rowCount} rows)`);
+    try {
+      const evaluations = await collector.timeAsync(
+        ['benchmark', 'evaluateCik'],
+        async () => engine.evaluateCik(cik),
+        { cik }
+      );
+
+      allEvaluations.push(...evaluations);
+      filesProcessed += evaluations.length;
+      totalRows += evaluations.reduce((sum, e) => sum + e.rowCount, 0);
+
+      collector.addFiles(evaluations.length);
+      collector.addRows(evaluations.reduce((sum, e) => sum + e.rowCount, 0));
+
+      // Progress indicator every 10 CIKs or at the end
+      if ((i + 1) % 10 === 0 || i === measurementCikList.length - 1) {
+        const percent = ((i + 1) / measurementCikList.length * 100).toFixed(1);
+        console.log(`   Progress: ${i + 1}/${measurementCikList.length} CIKs (${percent}%) - ${filesProcessed} files`);
+      }
+    } catch (error) {
+      collector.recordError(error, 'evaluateCik', { cik });
+      console.error(`   ❌ Error processing CIK ${cik}:`, error);
+    }
   }
 
   // Get memory usage if available
@@ -183,39 +111,32 @@ export async function runNativeBenchmark(options: BenchmarkOptions = {}): Promis
 
   const summary = collector.stop({ memoryUsageMB, peakMemoryMB });
 
-  // Calculate stats
-  const originalStats = calcStats(originalTimes);
-  const optimizedStats = calcStats(optimizedTimes);
-  const speedup = originalStats && optimizedStats
-    ? originalStats.median / optimizedStats.median
-    : null;
+  // Count detection results
+  const detectionResults = {
+    needsX1000: allEvaluations.filter(e => e.status === 'needs-x1000').length,
+    correct: allEvaluations.filter(e => e.status === 'correct').length,
+    unclear: allEvaluations.filter(e => e.status === 'unclear').length,
+  };
 
   console.log(`\n✅ Benchmark Complete!`);
-  console.log(`   Files queried: ${measurementRuns * 2}`);
+  console.log(`   Files processed: ${filesProcessed}`);
   console.log(`   Total rows: ${totalRows}`);
   console.log(`   Duration: ${summary.metrics.totalDurationMs.toFixed(2)}ms`);
-  if (originalStats) {
-    console.log(`   Original median: ${originalStats.median.toFixed(2)}ms`);
-  }
-  if (optimizedStats) {
-    console.log(`   Optimized median: ${optimizedStats.median.toFixed(2)}ms`);
-  }
-  if (speedup !== null) {
-    console.log(`   Speedup: ${speedup.toFixed(2)}x`);
-  }
+  console.log(`   Throughput: ${summary.metrics.throughputFilesPerSec.toFixed(2)} files/sec`);
+  console.log(`\n📈 Detection Results:`);
+  console.log(`   needs-x1000: ${detectionResults.needsX1000}`);
+  console.log(`   correct: ${detectionResults.correct}`);
+  console.log(`   unclear: ${detectionResults.unclear}`);
 
   const result: BenchmarkResult = {
     timestamp: new Date().toISOString(),
     platform: 'native',
-    warmupCiks: warmupRuns,
-    measurementCiks: measurementRuns,
-    totalFiles: measurementRuns * 2,
+    warmupCiks,
+    measurementCiks: measurementCikList.length,
+    totalFiles: filesProcessed,
     metrics: summary,
-    evaluations: [], // Empty for simple benchmark
-    warmup: { runs: warmupRuns, times: warmupTimes },
-    original: originalStats ?? undefined,
-    optimized: optimizedStats ?? undefined,
-    speedup,
+    evaluations: allEvaluations,
+    detectionResults,
   };
 
   // Export to JSON

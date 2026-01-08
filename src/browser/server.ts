@@ -1,13 +1,15 @@
 /**
- * Minimal HTTP server for serving local parquet files to browser clients.
+ * HTTP server for serving SEC filing parquet files to browser clients.
  *
  * Features:
  * - CORS (including Range header support)
  * - HTTP Range requests (206 Partial Content) for efficient parquet streaming
  * - Static file serving for web UI
+ * - API endpoints for file listing
  */
 
 import { BENCHMARK_CONFIG } from '../../benchmark.config';
+import { readdirSync } from 'node:fs';
 import path from 'node:path';
 
 export interface BrowserServerOptions {
@@ -15,7 +17,7 @@ export interface BrowserServerOptions {
 }
 
 export function startBrowserServer(options?: BrowserServerOptions) {
-  const port = options?.port ?? Number(process.env.PORT ?? 3000);
+  const port = options?.port ?? BENCHMARK_CONFIG.server.port;
 
   // Web files directory
   const webDir = path.join(import.meta.dir, 'web');
@@ -55,12 +57,46 @@ export function startBrowserServer(options?: BrowserServerOptions) {
         return withCors(Response.json({ ok: true }), req);
       }
 
-      if (url.pathname === '/files/original.parquet') {
-        return withCors(await serveFileWithRange(req, BENCHMARK_CONFIG.paths.original), req);
+      // API: List all antigravity files
+      if (url.pathname === '/api/files/antigravity') {
+        try {
+          const files = readdirSync(BENCHMARK_CONFIG.paths.ANTIGRAVITY_SOURCE)
+            .filter(f => f.endsWith('.parquet'));
+          return withCors(Response.json({ files, count: files.length }), req);
+        } catch (e) {
+          return withCors(Response.json({ error: 'Failed to list files' }, { status: 500 }), req);
+        }
       }
 
-      if (url.pathname === '/files/optimized.parquet') {
-        return withCors(await serveFileWithRange(req, BENCHMARK_CONFIG.paths.optimized), req);
+      // API: List verified files for a CIK
+      if (url.pathname.startsWith('/api/files/verified/')) {
+        const cik = url.pathname.split('/').pop();
+        try {
+          const files = readdirSync(BENCHMARK_CONFIG.paths.VERIFIED_FILINGS)
+            .filter(f => f.endsWith('.parquet') && f.startsWith(`${cik}-`));
+          return withCors(Response.json({ files, count: files.length }), req);
+        } catch (e) {
+          return withCors(Response.json({ error: 'Failed to list files' }, { status: 500 }), req);
+        }
+      }
+
+      // Serve antigravity parquet files
+      if (url.pathname.startsWith('/data/antigravity/')) {
+        const filename = url.pathname.replace('/data/antigravity/', '');
+        const filePath = path.join(BENCHMARK_CONFIG.paths.ANTIGRAVITY_SOURCE, filename);
+        return withCors(await serveFileWithRange(req, filePath), req);
+      }
+
+      // Serve verified parquet files
+      if (url.pathname.startsWith('/data/verified/')) {
+        const filename = url.pathname.replace('/data/verified/', '');
+        const filePath = path.join(BENCHMARK_CONFIG.paths.VERIFIED_FILINGS, filename);
+        return withCors(await serveFileWithRange(req, filePath), req);
+      }
+
+      // Serve market prices file
+      if (url.pathname === '/data/market-prices') {
+        return withCors(await serveFileWithRange(req, BENCHMARK_CONFIG.paths.MARKET_PRICES), req);
       }
 
       return withCors(new Response('Not found', { status: 404 }), req);
@@ -72,7 +108,6 @@ export function startBrowserServer(options?: BrowserServerOptions) {
 
 if (import.meta.main) {
   const server = startBrowserServer();
-  // eslint-disable-next-line no-console
   console.log(`Browser parquet server listening on http://localhost:${server.port}`);
 }
 
@@ -134,7 +169,6 @@ async function serveFileWithRange(req: Request, filePath: string): Promise<Respo
 }
 
 function parseRange(rangeHeader: string, size: number): { start: number; endInclusive: number } | null {
-  // Only supports a single range: "bytes=start-end"
   const match = rangeHeader.match(/^bytes=(\d*)-(\d*)$/);
   if (!match) return null;
 

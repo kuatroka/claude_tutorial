@@ -12,8 +12,8 @@ import { DuckDBNodeAdapter } from './duckdb-adapter';
 import { BENCHMARK_CONFIG } from '../../benchmark.config';
 import path from 'node:path';
 
-// Default market prices path - can be overridden
-const DEFAULT_MARKET_PRICES_PATH = path.join(import.meta.dir, '../../data/market_prices.parquet');
+// Market prices path from config
+const DEFAULT_MARKET_PRICES_PATH = BENCHMARK_CONFIG.paths.MARKET_PRICES;
 
 /**
  * Convert quarter format from "YYYY-QN" to "YYYYQN" for market prices table.
