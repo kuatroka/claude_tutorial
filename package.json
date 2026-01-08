@@ -7,6 +7,10 @@
     "start": "bun run src/dev.ts",
     "cli": "bun run src/index.ts",
     "benchmark": "bun run src/benchmark.ts",
+    "main": "bun run src/main.ts",
+    "main:native": "bun run src/main.ts --mode=native",
+    "main:server": "bun run src/main.ts --mode=server",
+    "main:compare": "bun run src/main.ts --mode=compare",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
