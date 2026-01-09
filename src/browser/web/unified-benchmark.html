@@ -1,0 +1,684 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>DuckDB Benchmark - Unified</title>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 20px;
+      background: #f5f5f5;
+      color: #333;
+    }
+    h1 {
+      color: #2c3e50;
+      border-bottom: 3px solid #3498db;
+      padding-bottom: 10px;
+      margin-bottom: 20px;
+    }
+    .card {
+      background: white;
+      border-radius: 8px;
+      padding: 20px;
+      margin-bottom: 20px;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    }
+    .status {
+      display: inline-block;
+      padding: 6px 12px;
+      border-radius: 4px;
+      font-weight: bold;
+      font-size: 14px;
+    }
+    .status.loading { background: #f39c12; color: white; }
+    .status.ready { background: #27ae60; color: white; }
+    .status.error { background: #e74c3c; color: white; }
+    .status.running { background: #3498db; color: white; animation: pulse 1.5s ease-in-out infinite; }
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.6; }
+    }
+    button {
+      background: #3498db;
+      color: white;
+      border: none;
+      padding: 12px 24px;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 16px;
+      font-weight: 600;
+      transition: background 0.2s;
+    }
+    button:hover:not(:disabled) { background: #2980b9; }
+    button:disabled { background: #bdc3c7; cursor: not-allowed; }
+    .progress-bar {
+      width: 100%;
+      height: 30px;
+      background: #ecf0f1;
+      border-radius: 15px;
+      overflow: hidden;
+      margin: 15px 0;
+    }
+    .progress-fill {
+      height: 100%;
+      background: linear-gradient(90deg, #3498db, #27ae60);
+      transition: width 0.3s;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: white;
+      font-weight: bold;
+      font-size: 14px;
+    }
+    .results-table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 20px;
+    }
+    .results-table th {
+      background: #34495e;
+      color: white;
+      padding: 12px;
+      text-align: left;
+      font-weight: 600;
+    }
+    .results-table td {
+      padding: 12px;
+      border-bottom: 1px solid #ecf0f1;
+    }
+    .results-table tr:hover {
+      background: #f8f9fa;
+    }
+    .comparison-box {
+      background: #e8f5e9;
+      border-left: 4px solid #27ae60;
+      padding: 15px;
+      margin-top: 20px;
+      border-radius: 4px;
+    }
+    .comparison-box.error {
+      background: #ffebee;
+      border-left-color: #e74c3c;
+    }
+    .comparison-title {
+      font-weight: bold;
+      font-size: 16px;
+      margin-bottom: 10px;
+      color: #2c3e50;
+    }
+    .comparison-metric {
+      margin: 5px 0;
+      font-size: 14px;
+    }
+    .log-entry {
+      padding: 5px 0;
+      border-bottom: 1px solid #eee;
+      font-size: 13px;
+      font-family: 'Courier New', monospace;
+    }
+    .log-entry.error { color: #e74c3c; }
+    .log-entry.success { color: #27ae60; }
+    .log-entry.info { color: #3498db; }
+    #log-container {
+      max-height: 300px;
+      overflow-y: auto;
+      background: #fafafa;
+      padding: 10px;
+      border-radius: 4px;
+    }
+    .phase-indicator {
+      display: inline-block;
+      padding: 4px 10px;
+      border-radius: 3px;
+      font-size: 12px;
+      font-weight: bold;
+      margin-left: 10px;
+    }
+    .phase-duckdb-node-neo {
+      background: #3498db;
+      color: white;
+    }
+    .phase-duckdb-wasm {
+      background: #9b59b6;
+      color: white;
+    }
+  </style>
+</head>
+<body>
+  <h1>🦆 DuckDB Benchmark - Node-Neo vs WASM</h1>
+
+  <div class="card">
+    <h2>Status</h2>
+    <p>
+      DuckDB-WASM: <span id="duckdb-status" class="status loading">Initializing...</span>
+      <span id="phase-indicator" class="phase-indicator" style="display:none;"></span>
+    </p>
+    <p id="version-info" style="color: #7f8c8d; font-size: 14px;">Version: Loading...</p>
+  </div>
+
+  <div class="card">
+    <h2>Run Benchmarks</h2>
+    <p>Click the button below to run both DuckDB-Node-Neo and DuckDB-WASM benchmarks sequentially.</p>
+    <button id="run-both-btn" disabled>Run Both Benchmarks</button>
+
+    <div id="progress-section" style="display:none;">
+      <div class="progress-bar">
+        <div class="progress-fill" id="progress-fill" style="width:0%">0%</div>
+      </div>
+      <p id="progress-text" style="text-align: center; color: #7f8c8d;"></p>
+    </div>
+  </div>
+
+  <div class="card" id="results-card" style="display:none;">
+    <h2>Results</h2>
+    <table class="results-table">
+      <thead>
+        <tr>
+          <th>Implementation</th>
+          <th>Duration (s)</th>
+          <th>Files</th>
+          <th>Throughput (files/s)</th>
+          <th>Status</th>
+        </tr>
+      </thead>
+      <tbody id="results-tbody">
+        <!-- Results will be inserted here -->
+      </tbody>
+    </table>
+
+    <div id="comparison-section"></div>
+  </div>
+
+  <div class="card">
+    <h2>Log</h2>
+    <div id="log-container">
+      <div class="log-entry">Waiting for DuckDB-WASM initialization...</div>
+    </div>
+  </div>
+
+  <script type="module">
+    import * as duckdb from 'https://cdn.jsdelivr.net/npm/@duckdb/duckdb-wasm@1.33.1-dev16.0/+esm';
+    import { BrowserDetectionEngine } from '/detection-engine-browser.js';
+
+    // Global state
+    let db = null;
+    let conn = null;
+    let antigravityFiles = [];
+    let isRunning = false;
+
+    // DOM elements
+    const statusEl = document.getElementById('duckdb-status');
+    const phaseIndicator = document.getElementById('phase-indicator');
+    const versionInfo = document.getElementById('version-info');
+    const runBothBtn = document.getElementById('run-both-btn');
+    const progressSection = document.getElementById('progress-section');
+    const progressFill = document.getElementById('progress-fill');
+    const progressText = document.getElementById('progress-text');
+    const resultsCard = document.getElementById('results-card');
+    const resultsTbody = document.getElementById('results-tbody');
+    const comparisonSection = document.getElementById('comparison-section');
+    const logContainer = document.getElementById('log-container');
+
+    function log(message, type = 'info') {
+      const entry = document.createElement('div');
+      entry.className = `log-entry ${type}`;
+      entry.textContent = `[${new Date().toLocaleTimeString()}] ${message}`;
+      logContainer.appendChild(entry);
+      logContainer.scrollTop = logContainer.scrollHeight;
+    }
+
+    function setStatus(status, className) {
+      statusEl.textContent = status;
+      statusEl.className = `status ${className}`;
+    }
+
+    function setPhase(phase, text) {
+      phaseIndicator.textContent = text;
+      phaseIndicator.className = `phase-indicator phase-${phase}`;
+      phaseIndicator.style.display = 'inline-block';
+    }
+
+    function hidePhase() {
+      phaseIndicator.style.display = 'none';
+    }
+
+    function updateProgress(percent, text) {
+      progressFill.style.width = `${percent}%`;
+      progressFill.textContent = `${percent}%`;
+      progressText.textContent = text;
+    }
+
+    function showProgress() {
+      progressSection.style.display = 'block';
+    }
+
+    function hideProgress() {
+      progressSection.style.display = 'none';
+    }
+
+    async function initDuckDB() {
+      try {
+        log('Loading DuckDB-WASM bundles...', 'info');
+        const JSDELIVR_BUNDLES = duckdb.getJsDelivrBundles();
+        const bundle = await duckdb.selectBundle(JSDELIVR_BUNDLES);
+
+        // Create worker using official pattern from DuckDB-WASM docs
+        const worker_url = URL.createObjectURL(
+          new Blob([`importScripts("${bundle.mainWorker}");`], { type: 'text/javascript' })
+        );
+        const worker = new Worker(worker_url);
+        const logger = new duckdb.ConsoleLogger();
+        db = new duckdb.AsyncDuckDB(logger, worker);
+
+        await db.instantiate(bundle.mainModule, bundle.pthreadWorker);
+        URL.revokeObjectURL(worker_url);
+
+        conn = await db.connect();
+        const versionResult = await conn.query('SELECT version() as version');
+        const duckdbCoreVersion = versionResult.toArray()[0].version;
+
+        // Display npm package version (from CDN URL) and DuckDB core version
+        const npmPackageVersion = '1.33.1-dev16.0'; // From CDN import
+        versionInfo.textContent = `DuckDB-WASM: v${npmPackageVersion} (DuckDB core: ${duckdbCoreVersion})`;
+        setStatus('Ready', 'ready');
+        log(`DuckDB-WASM initialized successfully`, 'success');
+
+        // Load file list
+        await loadFileList();
+
+        runBothBtn.disabled = false;
+
+      } catch (error) {
+        setStatus('Error', 'error');
+        log(`Failed to initialize DuckDB-WASM: ${error.message}`, 'error');
+        console.error(error);
+      }
+    }
+
+    async function loadFileList() {
+      try {
+        const response = await fetch('/api/files/antigravity');
+        const data = await response.json();
+        antigravityFiles = data.files || [];
+        log(`Loaded ${antigravityFiles.length} antigravity files`, 'success');
+      } catch (e) {
+        log(`Failed to load file list: ${e.message}`, 'error');
+      }
+    }
+
+    async function runBothBenchmarks() {
+      if (isRunning) {
+        log('Benchmarks already running', 'error');
+        return;
+      }
+
+      isRunning = true;
+      runBothBtn.disabled = true;
+      runBothBtn.textContent = 'Running...';
+      resultsTbody.innerHTML = '';
+      comparisonSection.innerHTML = '';
+      resultsCard.style.display = 'none';
+      showProgress();
+
+      try {
+        const runToken = String(Date.now());
+
+        // Phase 1: Native FS full benchmark (server)
+        log('Starting native FS full benchmark (server)...', 'info');
+        setStatus('Running', 'running');
+        setPhase('duckdb-node-neo', 'Native FS');
+        updateProgress(10, 'Running native FS full benchmark on server...');
+
+        const nativeFsResp = await fetch('/api/benchmark/native-fs-full', { method: 'POST' });
+        if (!nativeFsResp.ok) throw new Error(`native-fs-full failed (${nativeFsResp.status})`);
+        const { result: nativeFsResult } = await nativeFsResp.json();
+        log(`Native FS completed in ${(nativeFsResult.metrics.metrics.totalDurationMs / 1000).toFixed(2)}s`, 'success');
+        addResultRow('Native FS (full)', nativeFsResult);
+        updateProgress(35, 'Native FS full completed');
+
+        // Phase 2: Native HTTP full benchmark (server reading over HTTP URLs)
+        log('Starting native HTTP full benchmark (server)...', 'info');
+        setPhase('duckdb-node-neo', 'Native HTTP');
+        updateProgress(40, 'Running native HTTP full benchmark on server...');
+
+        const nativeHttpResp = await fetch('/api/benchmark/native-http-full', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ runToken })
+        });
+        if (!nativeHttpResp.ok) throw new Error(`native-http-full failed (${nativeHttpResp.status})`);
+        const { result: nativeHttpResult } = await nativeHttpResp.json();
+        log(`Native HTTP completed in ${(nativeHttpResult.metrics.metrics.totalDurationMs / 1000).toFixed(2)}s`, 'success');
+        addResultRow('Native HTTP (full)', nativeHttpResult);
+        updateProgress(60, 'Native HTTP full completed');
+
+        // Phase 3: WASM HTTP full benchmark (browser)
+        log('Starting WASM HTTP full benchmark (browser)...', 'info');
+        setPhase('duckdb-wasm', 'WASM HTTP');
+        updateProgress(65, 'Running WASM HTTP full benchmark in browser...');
+
+        const wasmHttpResult = await runWasmHttpFullBenchmark({ runToken });
+        log(`WASM HTTP completed in ${(wasmHttpResult.metrics.metrics.totalDurationMs / 1000).toFixed(2)}s`, 'success');
+        addResultRow('WASM HTTP (full)', wasmHttpResult);
+        updateProgress(90, 'WASM HTTP full completed');
+
+        // Phase 4: Send WASM results to server
+        await fetch('/api/benchmark/wasm-http-full', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(wasmHttpResult)
+        });
+
+        // Phase 5: Fetch comparisons
+        updateProgress(95, 'Generating comparisons...');
+        const resultsResp = await fetch('/api/benchmark/results');
+        const unified = await resultsResp.json();
+
+        displayComparison(unified.comparisons);
+
+        updateProgress(100, 'All benchmarks completed!');
+        setStatus('Completed', 'ready');
+        hidePhase();
+        log('All benchmarks completed successfully!', 'success');
+        resultsCard.style.display = 'block';
+
+      } catch (error) {
+        log(`Benchmark failed: ${error.message}`, 'error');
+        setStatus('Error', 'error');
+        hidePhase();
+        alert(`Benchmark failed: ${error.message}`);
+      } finally {
+        isRunning = false;
+        runBothBtn.disabled = false;
+        runBothBtn.textContent = 'Run Both Benchmarks';
+        setTimeout(hideProgress, 2000);
+      }
+    }
+
+    async function runWasmHttpFullBenchmark({ runToken }) {
+      if (!conn) throw new Error('DuckDB-WASM connection not ready');
+
+      const origin = window.location.origin;
+      const marketPricesUrl = `${origin}/data/market-prices?run=${encodeURIComponent(runToken)}`;
+
+      const toMarketQuarterFormat = (q) => q.replace('-', '');
+      const isHttpUrl = (u) => u.startsWith('http://') || u.startsWith('https://');
+      const withRun = (u) => {
+        if (!isHttpUrl(u)) return u;
+        const url = new URL(u);
+        url.searchParams.set('run', runToken);
+        return url.toString();
+      };
+
+      const parquetOps = {
+        async getFileStats(url) {
+          const result = await conn.query(`
+            SELECT
+              COALESCE(SUM(value), 0) as total_value,
+              COUNT(*) as row_count,
+              MEDIAN(CASE WHEN shares > 0 THEN CAST(value AS DOUBLE) / shares ELSE NULL END) as median_price_per_share
+            FROM read_parquet('${withRun(url)}')
+          `);
+          const row = result.toArray()[0];
+          return {
+            value: Number(row.total_value),
+            rowCount: Number(row.row_count),
+            medianPricePerShare: row.median_price_per_share != null ? Number(row.median_price_per_share) : null
+          };
+        },
+
+        async getMarketPriceComparison(fileUrl, quarter) {
+          const marketQuarter = toMarketQuarterFormat(quarter);
+          const result = await conn.query(`
+            WITH file_cusips AS (
+              SELECT
+                cusip,
+                value,
+                shares,
+                CASE WHEN shares > 0 THEN CAST(value AS DOUBLE) / shares ELSE NULL END as file_price
+              FROM read_parquet('${withRun(fileUrl)}')
+              WHERE cusip IS NOT NULL AND cusip != 'ZEROEMPTY'
+            ),
+            market AS (
+              SELECT
+                cusip,
+                median_sec_price,
+                count_ciks_per_cusip_per_quarter as num_filers
+              FROM read_parquet('${marketPricesUrl}')
+              WHERE quarter = '${marketQuarter}'
+                AND median_sec_price IS NOT NULL
+                AND median_sec_price > 0
+            ),
+            matched AS (
+              SELECT
+                f.cusip,
+                f.file_price,
+                m.median_sec_price,
+                m.num_filers,
+                f.file_price / m.median_sec_price as ratio
+              FROM file_cusips f
+              INNER JOIN market m ON f.cusip = m.cusip
+              WHERE f.file_price IS NOT NULL AND f.file_price > 0
+            )
+            SELECT
+              (SELECT COUNT(DISTINCT cusip) FROM matched) as matched_cusips,
+              (SELECT COUNT(DISTINCT cusip) FROM file_cusips) as total_cusips,
+              COALESCE(SUM(num_filers), 0) as total_filer_weight,
+              MEDIAN(ratio) as median_ratio,
+              AVG(ratio) as avg_ratio,
+              MIN(ratio) as min_ratio,
+              MAX(ratio) as max_ratio,
+              SUM(CASE WHEN ratio BETWEEN 0.0003 AND 0.003 THEN num_filers ELSE 0 END) as needs_x1000_weight,
+              SUM(CASE WHEN ratio BETWEEN 0.1 AND 10 THEN num_filers ELSE 0 END) as correct_weight
+            FROM matched
+          `);
+
+          const row = result.toArray()[0];
+          const matchedCusips = Number(row.matched_cusips);
+          if (!matchedCusips) {
+            return {
+              matchedCusips: 0,
+              totalCusips: 0,
+              totalFilerWeight: 0,
+              medianRatio: null,
+              avgRatio: null,
+              minRatio: null,
+              maxRatio: null,
+              needsX1000Weight: 0,
+              correctWeight: 0,
+              verdict: 'unclear',
+              confidence: 0
+            };
+          }
+
+          const totalCusips = Number(row.total_cusips);
+          const totalFilerWeight = Number(row.total_filer_weight);
+          const medianRatio = row.median_ratio != null ? Number(row.median_ratio) : null;
+          const avgRatio = row.avg_ratio != null ? Number(row.avg_ratio) : null;
+          const minRatio = row.min_ratio != null ? Number(row.min_ratio) : null;
+          const maxRatio = row.max_ratio != null ? Number(row.max_ratio) : null;
+          const needsX1000Weight = Number(row.needs_x1000_weight);
+          const correctWeight = Number(row.correct_weight);
+
+          let verdict = 'unclear';
+          let confidence = 0;
+          if (totalFilerWeight > 0) {
+            const needsX1000Pct = needsX1000Weight / totalFilerWeight;
+            const correctPct = correctWeight / totalFilerWeight;
+            if (needsX1000Pct > 0.7) {
+              verdict = 'needs-x1000';
+              confidence = Math.min(0.95, 0.7 + (matchedCusips / 10) * 0.1 + (totalFilerWeight / 100) * 0.1);
+            } else if (correctPct > 0.7) {
+              verdict = 'correct';
+              confidence = Math.min(0.95, 0.7 + (matchedCusips / 10) * 0.1 + (totalFilerWeight / 100) * 0.1);
+            } else if (medianRatio !== null) {
+              if (medianRatio >= 0.0003 && medianRatio <= 0.003) {
+                verdict = 'needs-x1000';
+                confidence = 0.7;
+              } else if (medianRatio >= 0.1 && medianRatio <= 10) {
+                verdict = 'correct';
+                confidence = 0.7;
+              }
+            }
+          }
+
+          return {
+            matchedCusips,
+            totalCusips,
+            totalFilerWeight,
+            medianRatio,
+            avgRatio,
+            minRatio,
+            maxRatio,
+            needsX1000Weight,
+            correctWeight,
+            verdict,
+            confidence
+          };
+        }
+      };
+
+      const fileDiscovery = {
+        async listAntigravityFiles() {
+          const res = await fetch('/api/files/antigravity');
+          if (!res.ok) throw new Error(`Failed to list antigravity files (${res.status})`);
+          const data = await res.json();
+          return (data.files || []).slice().sort();
+        },
+        async listVerifiedFiles(cik) {
+          const res = await fetch(`/api/files/verified/${cik}`);
+          if (!res.ok) throw new Error(`Failed to list verified files (${res.status})`);
+          const data = await res.json();
+          return (data.files || []).slice().sort();
+        }
+      };
+
+      const engine = new BrowserDetectionEngine(
+        {
+          antigravityBaseUrl: `${origin}/data/antigravity`,
+          verifiedBaseUrl: `${origin}/data/verified`,
+          marketPricesUrl,
+          parquetOps
+        },
+        fileDiscovery
+      );
+
+      const cikMap = await engine.getAllCiks();
+      const allCiks = Array.from(cikMap.keys()).sort((a, b) => a - b);
+      const warmupCiks = 5;
+      const warmupList = allCiks.slice(0, warmupCiks);
+      const measurementList = allCiks.slice(warmupCiks);
+
+      for (let i = 0; i < warmupList.length; i++) {
+        await engine.evaluateCik(warmupList[i]);
+      }
+
+      const startTime = performance.now();
+      const evaluations = [];
+      let totalRows = 0;
+
+      for (let i = 0; i < measurementList.length; i++) {
+        const cik = measurementList[i];
+        const evals = await engine.evaluateCik(cik);
+        evaluations.push(...evals);
+        for (const e of evals) totalRows += e.rowCount;
+        const percent = Math.round(65 + (i / Math.max(1, measurementList.length)) * 20);
+        updateProgress(percent, `WASM HTTP: CIK ${i + 1}/${measurementList.length} (${evaluations.length} files)`);
+      }
+
+      const totalDurationMs = performance.now() - startTime;
+      const throughputFilesPerSec = totalDurationMs > 0 ? (evaluations.length / totalDurationMs) * 1000 : 0;
+      const throughputRowsPerSec = totalDurationMs > 0 ? (totalRows / totalDurationMs) * 1000 : 0;
+
+      return {
+        timestamp: new Date().toISOString(),
+        platform: 'wasm-http-full',
+        warmupCiks,
+        measurementCiks: measurementList.length,
+        totalFiles: evaluations.length,
+        metrics: {
+          metrics: {
+            totalDurationMs,
+            timings: [],
+            fileCount: evaluations.length,
+            rowCount: totalRows,
+            throughputFilesPerSec,
+            throughputRowsPerSec
+          },
+          timings: [],
+          operationStats: {},
+          errors: []
+        },
+        evaluations
+      };
+    }
+
+    function addResultRow(implementation, result) {
+      const duration = (result.metrics.metrics.totalDurationMs / 1000).toFixed(2);
+      const throughput = result.metrics.metrics.throughputFilesPerSec.toFixed(2);
+
+      const row = document.createElement('tr');
+      row.innerHTML = `
+        <td><strong>${implementation}</strong></td>
+        <td>${duration}</td>
+        <td>${result.totalFiles}</td>
+        <td>${throughput}</td>
+        <td><span class="status ready">✓</span></td>
+      `;
+      resultsTbody.appendChild(row);
+    }
+
+    function renderComparisonBlock(title, comparison, labels) {
+      if (!comparison) {
+        return `<div class="comparison-box"><div class="comparison-title">${title}</div><div class="comparison-metric">Not available</div></div>`;
+      }
+
+      const ratio = comparison.speedupRatio;
+      const speedText =
+        ratio > 1
+          ? `${labels.right} is ${ratio.toFixed(2)}x slower than ${labels.left}`
+          : `${labels.right} is ${(1 / ratio).toFixed(2)}x faster than ${labels.left}`;
+
+      const cssClass = comparison.verdictMatches ? '' : 'error';
+      return `
+        <div class="comparison-box ${cssClass}">
+          <div class="comparison-title">${title}</div>
+          <div class="comparison-metric"><strong>Speed:</strong> ${speedText}</div>
+          <div class="comparison-metric"><strong>Files match:</strong> ${comparison.filesMatch ? 'Yes ✓' : 'No ✗'}</div>
+          <div class="comparison-metric"><strong>Verdicts match:</strong> ${comparison.verdictMatches ? 'Yes ✓' : `No ✗ (${comparison.mismatches.length} mismatches)`}</div>
+        </div>
+      `;
+    }
+
+    function displayComparison(comparisons) {
+      if (!comparisons) {
+        comparisonSection.innerHTML = '<p>Comparison not available</p>';
+        return;
+      }
+
+      const fsVsHttp = renderComparisonBlock(
+        'Native FS vs Native HTTP',
+        comparisons.nativeFsVsNativeHttp,
+        { left: 'Native FS', right: 'Native HTTP' }
+      );
+      const httpVsWasm = renderComparisonBlock(
+        'Native HTTP vs WASM HTTP',
+        comparisons.nativeHttpVsWasmHttp,
+        { left: 'Native HTTP', right: 'WASM HTTP' }
+      );
+
+      comparisonSection.innerHTML = fsVsHttp + httpVsWasm;
+    }
+
+    // Event listeners
+    runBothBtn.addEventListener('click', runBothBenchmarks);
+
+    // Initialize
+    initDuckDB();
+  </script>
+</body>
+</html>

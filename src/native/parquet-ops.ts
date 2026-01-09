@@ -15,6 +15,10 @@ import path from 'node:path';
 // Market prices path from config
 const DEFAULT_MARKET_PRICES_PATH = BENCHMARK_CONFIG.paths.MARKET_PRICES;
 
+function isHttpIdentifier(identifier: string): boolean {
+  return identifier.startsWith('http://') || identifier.startsWith('https://');
+}
+
 /**
  * Convert quarter format from "YYYY-QN" to "YYYYQN" for market prices table.
  */
@@ -28,11 +32,12 @@ function toMarketQuarterFormat(quarter: string): string {
  */
 export class NativeParquetOps implements IParquetOps {
   private readonly db: DuckDBNodeAdapter;
-  private readonly marketPricesPath: string;
+  private readonly marketPricesIdentifier: string;
 
-  constructor(options?: { marketPricesPath?: string }) {
+  constructor(options?: { marketPricesPath?: string; marketPricesIdentifier?: string }) {
     this.db = new DuckDBNodeAdapter();
-    this.marketPricesPath = options?.marketPricesPath ?? DEFAULT_MARKET_PRICES_PATH;
+    this.marketPricesIdentifier =
+      options?.marketPricesIdentifier ?? options?.marketPricesPath ?? DEFAULT_MARKET_PRICES_PATH;
   }
 
   /**
@@ -41,6 +46,9 @@ export class NativeParquetOps implements IParquetOps {
    * SQL query ported from reference implementation (lines 72-92).
    */
   async getFileStats(identifier: string): Promise<ParquetFileStats> {
+    if (isHttpIdentifier(identifier)) {
+      await this.db.ensureHttpfs();
+    }
     const parsed = parseFilename(path.basename(identifier));
 
     const result = await this.db.query<{
@@ -90,6 +98,9 @@ export class NativeParquetOps implements IParquetOps {
     identifier: string,
     quarter: string
   ): Promise<MarketPriceComparison> {
+    if (isHttpIdentifier(identifier) || isHttpIdentifier(this.marketPricesIdentifier)) {
+      await this.db.ensureHttpfs();
+    }
     const marketQuarter = toMarketQuarterFormat(quarter);
 
     try {
@@ -118,7 +129,7 @@ export class NativeParquetOps implements IParquetOps {
             cusip,
             median_sec_price,
             count_ciks_per_cusip_per_quarter as num_filers
-          FROM read_parquet('${this.marketPricesPath}')
+          FROM read_parquet('${this.marketPricesIdentifier}')
           WHERE quarter = '${marketQuarter}'
             AND median_sec_price IS NOT NULL
             AND median_sec_price > 0

@@ -182,7 +182,7 @@ export class BrowserDetectionEngine {
  * Export for browser bundling.
  * This is the entry point for the bundled browser code.
  */
-if (typeof window !== 'undefined') {
-  // Expose to global scope for browser usage
-  (window as any).BrowserDetectionEngine = BrowserDetectionEngine;
+const g = globalThis as any;
+if (g && typeof g.window !== 'undefined') {
+  g.window.BrowserDetectionEngine = BrowserDetectionEngine;
 }

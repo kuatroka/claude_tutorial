@@ -3,12 +3,12 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>SEC 13F Detection Benchmark - Browser</title>
+  <title>DuckDB Benchmark: duckdb-node-neo vs duckdb-wasm</title>
   <style>
     * { box-sizing: border-box; }
     body {
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-      max-width: 1000px;
+      max-width: 1100px;
       margin: 0 auto;
       padding: 20px;
       background: #f5f5f5;
@@ -49,7 +49,7 @@
     }
     button:hover { background: #2980b9; }
     button:disabled { background: #bdc3c7; cursor: not-allowed; }
-    pre {
+    pre, code {
       background: #2c3e50;
       color: #ecf0f1;
       padding: 15px;
@@ -71,6 +71,7 @@
     }
     .log-entry.error { color: #e74c3c; }
     .log-entry.success { color: #27ae60; }
+    .log-entry.dim { color: #7f8c8d; }
     .stats {
       display: grid;
       grid-template-columns: repeat(3, 1fr);
@@ -98,25 +99,91 @@
       background: linear-gradient(90deg, #3498db, #27ae60);
       transition: width 0.3s;
     }
+    .row {
+      display: flex;
+      gap: 12px;
+      align-items: center;
+      flex-wrap: wrap;
+      margin: 10px 0;
+    }
+    label {
+      font-size: 13px;
+      color: #2c3e50;
+      display: inline-flex;
+      gap: 8px;
+      align-items: center;
+    }
+    input[type="number"] {
+      width: 90px;
+      padding: 8px 10px;
+      border: 1px solid #d0d7de;
+      border-radius: 6px;
+      font-size: 14px;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 10px;
+      background: white;
+    }
+    th, td {
+      text-align: left;
+      padding: 10px 12px;
+      border-bottom: 1px solid #eee;
+      font-size: 13px;
+    }
+    th {
+      font-weight: 700;
+      color: #2c3e50;
+      background: #f7f9fb;
+      position: sticky;
+      top: 0;
+      z-index: 1;
+    }
+    .pill {
+      display: inline-block;
+      padding: 3px 10px;
+      border-radius: 999px;
+      font-size: 12px;
+      font-weight: 700;
+    }
+    .pill.node-neo { background: #eef2ff; color: #3730a3; }
+    .pill.wasm { background: #ecfdf5; color: #065f46; }
   </style>
 </head>
 <body>
-  <h1>SEC 13F Detection Benchmark - Browser (DuckDB-WASM)</h1>
+  <h1>DuckDB Benchmark: duckdb-node-neo vs duckdb-wasm</h1>
 
   <div class="card">
     <h2>Status</h2>
-    <p>DuckDB: <span id="status" class="status loading">Initializing...</span></p>
-    <p>Version: <span id="version">-</span></p>
+    <p>DuckDB-WASM: <span id="status" class="status loading">Initializing...</span></p>
+    <p>duckdb-wasm (npm): <span id="wasm-npm-version">-</span></p>
+    <p>DuckDB engine (WASM): <span id="wasm-engine-version">-</span></p>
+    <p>duckdb-node-neo (npm): <span id="node-neo-version">-</span></p>
+    <p>WASM init (import / instantiate / connect): <span id="wasm-init-timings">-</span></p>
     <p>Data: <span id="data-status">-</span></p>
   </div>
 
   <div class="card">
     <h2>Benchmark Controls</h2>
-    <p>Test detection engine performance using DuckDB-WASM with HTTP parquet access.</p>
-    <div>
-      <button id="btn-test" disabled>Test Single File</button>
-      <button id="btn-benchmark" disabled>Run Full Benchmark (5 CIKs)</button>
+    <p>Runs two benchmarks sequentially and summarizes both in a single table:</p>
+    <ul style="margin-top: 8px; color: #566; font-size: 13px; line-height: 1.5;">
+      <li><strong>duckdb-node-neo</strong>: DuckDB via <code style="background:#eef; color:#223; padding:2px 6px; border-radius:4px;">@duckdb/node-api</code> reading the parquet files over HTTP</li>
+      <li><strong>duckdb-wasm</strong>: DuckDB-WASM reading the same parquet files over HTTP (Range requests)</li>
+    </ul>
+
+    <div class="row">
+      <label>Warmup CIKs <input id="warmup-ciks" type="number" min="0" step="1" value="0"></label>
+      <label>Measurement CIKs <input id="measurement-ciks" type="number" min="1" step="1" value="5"></label>
     </div>
+
+    <div class="row">
+      <button id="btn-run-both" disabled>Run Both Benchmarks</button>
+      <button id="btn-native" disabled>Run duckdb-node-neo Only</button>
+      <button id="btn-browser" disabled>Run duckdb-wasm Only</button>
+      <button id="btn-test" disabled>Test Single File (duckdb-wasm)</button>
+    </div>
+
     <div class="progress-bar" id="progress-container" style="display:none;">
       <div class="progress-fill" id="progress-fill" style="width:0%"></div>
     </div>
@@ -124,19 +191,20 @@
   </div>
 
   <div class="card">
-    <h2>Results Summary</h2>
+    <h2>Results</h2>
+    <div id="results-table-wrap" style="display:none; overflow:auto; max-height: 360px;"></div>
     <div class="stats">
       <div class="stat-box">
-        <div class="stat-value" id="stat-files">-</div>
-        <div class="stat-label">Files Processed</div>
+        <div class="stat-value" id="stat-node-neo">-</div>
+        <div class="stat-label">duckdb-node-neo (files/s)</div>
       </div>
       <div class="stat-box">
-        <div class="stat-value" id="stat-duration">-</div>
-        <div class="stat-label">Duration (s)</div>
+        <div class="stat-value" id="stat-wasm">-</div>
+        <div class="stat-label">duckdb-wasm (files/s)</div>
       </div>
       <div class="stat-box">
-        <div class="stat-value" id="stat-throughput">-</div>
-        <div class="stat-label">Files/sec</div>
+        <div class="stat-value" id="stat-speedup">-</div>
+        <div class="stat-label">node-neo ÷ wasm</div>
       </div>
     </div>
   </div>
@@ -149,33 +217,42 @@
   </div>
 
   <div class="card">
-    <h2>Benchmark Results</h2>
+    <h2>Raw Output</h2>
     <pre id="output">No benchmark run yet.</pre>
   </div>
 
   <script type="module">
-    import * as duckdb from 'https://cdn.jsdelivr.net/npm/@duckdb/duckdb-wasm@1.29.0/+esm';
+    let duckdb = null;
 
-    const SERVER_URL = 'http://localhost:3000';
+    const SERVER_URL = window.location.origin;
 
     // DOM elements
     const statusEl = document.getElementById('status');
-    const versionEl = document.getElementById('version');
+    const wasmNpmVersionEl = document.getElementById('wasm-npm-version');
+    const wasmEngineVersionEl = document.getElementById('wasm-engine-version');
+    const nodeNeoVersionEl = document.getElementById('node-neo-version');
+    const wasmInitTimingsEl = document.getElementById('wasm-init-timings');
     const dataStatusEl = document.getElementById('data-status');
     const logEl = document.getElementById('log');
     const outputEl = document.getElementById('output');
     const btnTest = document.getElementById('btn-test');
-    const btnBenchmark = document.getElementById('btn-benchmark');
+    const btnRunBoth = document.getElementById('btn-run-both');
+    const btnNative = document.getElementById('btn-native');
+    const btnBrowser = document.getElementById('btn-browser');
     const progressContainer = document.getElementById('progress-container');
     const progressFill = document.getElementById('progress-fill');
     const progressText = document.getElementById('progress-text');
-    const statFiles = document.getElementById('stat-files');
-    const statDuration = document.getElementById('stat-duration');
-    const statThroughput = document.getElementById('stat-throughput');
+    const warmupInput = document.getElementById('warmup-ciks');
+    const measurementInput = document.getElementById('measurement-ciks');
+    const resultsTableWrap = document.getElementById('results-table-wrap');
+    const statNodeNeo = document.getElementById('stat-node-neo');
+    const statWasm = document.getElementById('stat-wasm');
+    const statSpeedup = document.getElementById('stat-speedup');
 
     let db = null;
     let conn = null;
     let antigravityFiles = [];
+    let isRunning = false;
 
     // Expose results globally for Claude to extract
     window.benchmarkResults = null;
@@ -197,19 +274,66 @@
       outputEl.textContent = typeof content === 'string' ? content : JSON.stringify(content, null, 2);
     }
 
+    function fmt(num, digits = 2) {
+      if (num == null || !Number.isFinite(num)) return '-';
+      return Number(num).toFixed(digits);
+    }
+
+    function fmtInt(num) {
+      if (num == null || !Number.isFinite(num)) return '-';
+      return String(Math.round(num)).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+    }
+
+    let lastProgressUpdateTs = 0;
     function updateProgress(current, total, message) {
+      const now = performance.now();
+      const isLast = current >= total;
+      if (!isLast && now - lastProgressUpdateTs < 50 && current % 5 !== 0) return;
+      lastProgressUpdateTs = now;
       const pct = (current / total * 100).toFixed(1);
       progressFill.style.width = `${pct}%`;
       progressText.textContent = message || `${current}/${total} (${pct}%)`;
     }
 
-    async function initDuckDB() {
+    function showProgress() {
+      progressContainer.style.display = 'block';
+      progressText.style.display = 'block';
+    }
+
+    function hideProgress() {
+      progressContainer.style.display = 'none';
+      progressText.style.display = 'none';
+      progressFill.style.width = '0%';
+    }
+
+    function setControlsEnabled(enabled) {
+      btnTest.disabled = !enabled;
+      btnRunBoth.disabled = !enabled;
+      btnNative.disabled = !enabled;
+      btnBrowser.disabled = !enabled;
+      warmupInput.disabled = !enabled;
+      measurementInput.disabled = !enabled;
+    }
+
+    function setWasmInitTimings(t) {
+      const parts = [];
+      if (t.importMs != null) parts.push(`import ${fmt(t.importMs, 0)}ms`);
+      if (t.instantiateMs != null) parts.push(`instantiate ${fmt(t.instantiateMs, 0)}ms`);
+      if (t.connectMs != null) parts.push(`connect ${fmt(t.connectMs, 0)}ms`);
+      if (t.totalMs != null) parts.push(`total ${fmt(t.totalMs, 0)}ms`);
+      wasmInitTimingsEl.textContent = parts.length ? parts.join(' · ') : '-';
+    }
+
+    async function initDuckDB(initTiming = {}) {
       try {
+        const t0 = performance.now();
         log('Loading DuckDB-WASM bundles...');
         const JSDELIVR_BUNDLES = duckdb.getJsDelivrBundles();
         const bundle = await duckdb.selectBundle(JSDELIVR_BUNDLES);
         log(`Selected bundle: ${bundle.mainModule}`);
 
+        // Create worker using official pattern from DuckDB-WASM docs
+        const tInstantiateStart = performance.now();
         const worker_url = URL.createObjectURL(
           new Blob([`importScripts("${bundle.mainWorker}");`], { type: 'text/javascript' })
         );
@@ -219,20 +343,33 @@
 
         await db.instantiate(bundle.mainModule, bundle.pthreadWorker);
         URL.revokeObjectURL(worker_url);
+        const instantiateMs = performance.now() - tInstantiateStart;
 
+        const tConnectStart = performance.now();
         conn = await db.connect();
         const versionResult = await conn.query('SELECT version() as version');
         const version = versionResult.toArray()[0].version;
+        const connectMs = performance.now() - tConnectStart;
 
-        versionEl.textContent = version;
+        wasmEngineVersionEl.textContent = version;
         setStatus('Ready', 'ready');
-        log(`DuckDB-WASM initialized. Version: ${version}`, 'success');
+        log(`DuckDB-WASM initialized. Engine: ${version}`, 'success');
 
         // Load file list
         await loadFileList();
 
         btnTest.disabled = false;
-        btnBenchmark.disabled = false;
+        btnRunBoth.disabled = false;
+        btnNative.disabled = false;
+        btnBrowser.disabled = false;
+
+        const totalMs = performance.now() - t0;
+        setWasmInitTimings({
+          ...initTiming,
+          instantiateMs,
+          connectMs,
+          totalMs: (initTiming.importMs ?? 0) + totalMs,
+        });
 
       } catch (error) {
         setStatus('Error', 'error');
@@ -270,6 +407,47 @@
       };
     }
 
+    function groupFilesByCik(files) {
+      const cikMap = new Map();
+      for (const f of files) {
+        const cik = parseInt(f.split('-')[0]);
+        if (!cikMap.has(cik)) cikMap.set(cik, []);
+        cikMap.get(cik).push(f);
+      }
+      for (const [, arr] of cikMap) arr.sort();
+      return { cikMap, ciks: Array.from(cikMap.keys()).sort((a, b) => a - b) };
+    }
+
+    function hashToU32(input) {
+      // FNV-1a
+      let hash = 2166136261;
+      for (let i = 0; i < input.length; i++) {
+        hash ^= input.charCodeAt(i);
+        hash = Math.imul(hash, 16777619);
+      }
+      return hash >>> 0;
+    }
+
+    function mulberry32(seed) {
+      let t = seed >>> 0;
+      return () => {
+        t += 0x6d2b79f5;
+        let x = Math.imul(t ^ (t >>> 15), 1 | t);
+        x ^= x + Math.imul(x ^ (x >>> 7), 61 | x);
+        return ((x ^ (x >>> 14)) >>> 0) / 4294967296;
+      };
+    }
+
+    function shuffled(arr, seedStr) {
+      const out = [...arr];
+      const rand = mulberry32(hashToU32(seedStr));
+      for (let i = out.length - 1; i > 0; i--) {
+        const j = Math.floor(rand() * (i + 1));
+        [out[i], out[j]] = [out[j], out[i]];
+      }
+      return out;
+    }
+
     async function testSingleFile() {
       if (!conn || antigravityFiles.length === 0) {
         log('Not ready', 'error');
@@ -291,102 +469,272 @@
       }
     }
 
-    async function runBenchmark() {
+    async function runNodeNeoBenchmark({ warmupCiks, measurementCiks, runToken }) {
+      log(`Starting duckdb-node-neo benchmark (warmup=${warmupCiks}, measurement=${measurementCiks})...`);
+      const res = await fetch(`${SERVER_URL}/api/benchmark/native`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ warmupCiks, measurementCiks, runToken })
+      });
+
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || `duckdb-node-neo benchmark failed (${res.status})`);
+      }
+
+      const data = await res.json();
+      log(`duckdb-node-neo done: ${data.totalFiles} files in ${(data.totalDurationMs/1000).toFixed(2)}s`, 'success');
+      return data;
+    }
+
+    async function runBrowserBenchmark({ warmupCiks, measurementCiks, runToken }) {
       if (!conn || antigravityFiles.length === 0) {
-        log('Not ready', 'error');
-        return;
+        throw new Error('DuckDB-WASM not ready or no files available');
       }
+      const token = runToken ?? String(Date.now());
 
-      btnTest.disabled = true;
-      btnBenchmark.disabled = true;
-      setStatus('Running', 'running');
-      progressContainer.style.display = 'block';
-      progressText.style.display = 'block';
+      const { cikMap, ciks } = groupFilesByCik(antigravityFiles);
+      const selection = shuffled(ciks, token);
+      const warmupList = selection.slice(0, warmupCiks);
+      const measurementList = selection.slice(warmupCiks, warmupCiks + measurementCiks);
 
-      // Group files by CIK
-      const cikMap = new Map();
-      for (const f of antigravityFiles) {
-        const cik = parseInt(f.split('-')[0]);
-        if (!cikMap.has(cik)) cikMap.set(cik, []);
-        cikMap.get(cik).push(f);
-      }
-      const ciks = Array.from(cikMap.keys()).sort((a, b) => a - b);
-
-      // Process first 5 CIKs for demo
-      const testCiks = ciks.slice(0, 5);
-      log(`Running benchmark on ${testCiks.length} CIKs...`);
-
-      const startTime = performance.now();
-      const results = [];
-      let filesProcessed = 0;
-      let totalRows = 0;
-
-      for (let i = 0; i < testCiks.length; i++) {
-        const cik = testCiks[i];
-        const files = cikMap.get(cik);
-        log(`Processing CIK ${cik} (${files.length} files)...`);
-
+      // Warmup (discarded)
+      for (const cik of warmupList) {
+        const files = cikMap.get(cik) || [];
+        log(`Warmup CIK ${cik} (${files.length} files)...`, 'dim');
         for (const filename of files) {
-          const url = `${SERVER_URL}/data/antigravity/${filename}`;
-          try {
-            const fileStart = performance.now();
-            const stats = await getFileStats(url);
-            const duration = performance.now() - fileStart;
-
-            results.push({
-              filename,
-              cik,
-              durationMs: duration,
-              rowCount: stats.rowCount,
-              value: stats.value
-            });
-
-            filesProcessed++;
-            totalRows += stats.rowCount;
-            updateProgress(filesProcessed, testCiks.reduce((sum, c) => sum + cikMap.get(c).length, 0),
-              `${filesProcessed} files (CIK ${cik})`);
-          } catch (e) {
-            log(`Error on ${filename}: ${e.message}`, 'error');
-          }
+          const url = `${SERVER_URL}/data/antigravity/${filename}?run=${encodeURIComponent(token)}&warmup=1`;
+          await getFileStats(url);
         }
       }
 
-      const totalDuration = performance.now() - startTime;
-      const throughput = filesProcessed / (totalDuration / 1000);
+      const totalFilesToProcess = measurementList.reduce((sum, cik) => sum + (cikMap.get(cik)?.length ?? 0), 0);
+      log(`Starting browser benchmark: ${measurementList.length} CIKs, ${totalFilesToProcess} files...`);
 
-      // Update stats
-      statFiles.textContent = filesProcessed;
-      statDuration.textContent = (totalDuration / 1000).toFixed(2);
-      statThroughput.textContent = throughput.toFixed(2);
+      const startTime = performance.now();
+      let filesProcessed = 0;
+      let totalRows = 0;
 
-      const benchmarkResults = {
-        timestamp: new Date().toISOString(),
-        platform: 'browser',
-        ciks: testCiks.length,
+      for (let i = 0; i < measurementList.length; i++) {
+        const cik = measurementList[i];
+        const files = cikMap.get(cik) || [];
+        log(`Processing CIK ${cik} (${files.length} files)...`);
+
+        for (const filename of files) {
+          const url = `${SERVER_URL}/data/antigravity/${filename}?run=${encodeURIComponent(token)}`;
+          const stats = await getFileStats(url);
+          filesProcessed += 1;
+          totalRows += stats.rowCount;
+          updateProgress(filesProcessed, Math.max(1, totalFilesToProcess), `${filesProcessed}/${totalFilesToProcess} files`);
+        }
+      }
+
+      const totalDurationMs = performance.now() - startTime;
+      const throughputFilesPerSec = totalDurationMs > 0 ? (filesProcessed / totalDurationMs) * 1000 : 0;
+      const throughputRowsPerSec = totalDurationMs > 0 ? (totalRows / totalDurationMs) * 1000 : 0;
+
+      const summary = {
+        platform: 'duckdb-wasm',
+        runToken: token,
+        warmupCiks,
+        measurementCiks: measurementList.length,
         totalFiles: filesProcessed,
         totalRows,
-        totalDurationMs: totalDuration,
-        throughputFilesPerSec: throughput,
-        results
+        totalDurationMs,
+        throughputFilesPerSec,
+        throughputRowsPerSec
       };
 
-      window.benchmarkResults = benchmarkResults;
-      setOutput(benchmarkResults);
-      log(`Benchmark complete! ${filesProcessed} files in ${(totalDuration/1000).toFixed(2)}s`, 'success');
+      log(`duckdb-wasm done: ${filesProcessed} files in ${(totalDurationMs/1000).toFixed(2)}s`, 'success');
+      return summary;
+    }
 
-      setStatus('Ready', 'ready');
-      progressContainer.style.display = 'none';
-      progressText.style.display = 'none';
-      btnTest.disabled = false;
-      btnBenchmark.disabled = false;
+    function renderResultsTable(results) {
+      resultsTableWrap.style.display = 'block';
+
+      const rows = results.map(r => {
+        const pill = r.platform === 'duckdb-node-neo'
+          ? '<span class="pill node-neo">duckdb-node-neo</span>'
+          : '<span class="pill wasm">duckdb-wasm</span>';
+        return `
+          <tr>
+            <td>${pill}</td>
+            <td>${fmtInt(r.warmupCiks)}</td>
+            <td>${fmtInt(r.measurementCiks)}</td>
+            <td>${fmtInt(r.totalFiles)}</td>
+            <td>${fmtInt(r.totalRows)}</td>
+            <td>${fmt(r.totalDurationMs / 1000, 2)}</td>
+            <td>${fmt(r.throughputFilesPerSec, 2)}</td>
+            <td>${fmt(r.throughputRowsPerSec, 2)}</td>
+            <td>${r.memoryUsageMB != null ? fmtInt(r.memoryUsageMB) : '-'}</td>
+          </tr>
+        `;
+      }).join('');
+
+      resultsTableWrap.innerHTML = `
+        <table>
+          <thead>
+            <tr>
+              <th>Platform</th>
+              <th>Warmup CIKs</th>
+              <th>Measured CIKs</th>
+              <th>Files</th>
+              <th>Rows</th>
+              <th>Duration (s)</th>
+              <th>Files/s</th>
+              <th>Rows/s</th>
+              <th>Heap MB</th>
+            </tr>
+          </thead>
+          <tbody>${rows}</tbody>
+        </table>
+      `;
+    }
+
+    function updateHeadlineStats(nativeRes, browserRes) {
+      statNodeNeo.textContent = fmt(nativeRes?.throughputFilesPerSec, 2);
+      statWasm.textContent = fmt(browserRes?.throughputFilesPerSec, 2);
+      if (nativeRes?.throughputFilesPerSec && browserRes?.throughputFilesPerSec) {
+        statSpeedup.textContent = fmt(nativeRes.throughputFilesPerSec / browserRes.throughputFilesPerSec, 2) + 'x';
+      } else {
+        statSpeedup.textContent = '-';
+      }
+    }
+
+    async function runBoth() {
+      if (isRunning) return;
+      isRunning = true;
+      setControlsEnabled(false);
+      showProgress();
+      setStatus('Running', 'running');
+      resultsTableWrap.style.display = 'none';
+
+      const warmupCiks = Math.max(0, Math.floor(Number(warmupInput.value || 0)));
+      const measurementCiks = Math.max(1, Math.floor(Number(measurementInput.value || 5)));
+
+      try {
+        const runToken = (globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random()}`).toString();
+        log('Running duckdb-node-neo first...', 'dim');
+        updateProgress(0, 1, 'duckdb-node-neo...');
+        const nativeRes = await runNodeNeoBenchmark({ warmupCiks, measurementCiks, runToken });
+
+        log('Running duckdb-wasm next...', 'dim');
+        updateProgress(0, 1, 'duckdb-wasm...');
+        const browserRes = await runBrowserBenchmark({ warmupCiks, measurementCiks, runToken });
+
+        const combined = { runToken, duckdbNodeNeo: nativeRes, duckdbWasm: browserRes, timestamp: new Date().toISOString() };
+        window.benchmarkResults = combined;
+        renderResultsTable([nativeRes, browserRes]);
+        updateHeadlineStats(nativeRes, browserRes);
+        setOutput(combined);
+        setStatus('Ready', 'ready');
+      } catch (e) {
+        setStatus('Error', 'error');
+        log(e?.message ? e.message : String(e), 'error');
+        setOutput({ error: e?.message ? e.message : String(e) });
+      } finally {
+        hideProgress();
+        isRunning = false;
+        setControlsEnabled(true);
+      }
+    }
+
+    async function runNativeOnly() {
+      if (isRunning) return;
+      isRunning = true;
+      setControlsEnabled(false);
+      showProgress();
+      setStatus('Running', 'running');
+
+      const warmupCiks = Math.max(0, Math.floor(Number(warmupInput.value || 0)));
+      const measurementCiks = Math.max(1, Math.floor(Number(measurementInput.value || 5)));
+
+      try {
+        const runToken = (globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random()}`).toString();
+        updateProgress(0, 1, 'duckdb-node-neo...');
+        const nativeRes = await runNodeNeoBenchmark({ warmupCiks, measurementCiks, runToken });
+        window.benchmarkResults = { runToken, duckdbNodeNeo: nativeRes, timestamp: new Date().toISOString() };
+        renderResultsTable([nativeRes]);
+        updateHeadlineStats(nativeRes, null);
+        setOutput(window.benchmarkResults);
+        setStatus('Ready', 'ready');
+      } catch (e) {
+        setStatus('Error', 'error');
+        log(e?.message ? e.message : String(e), 'error');
+        setOutput({ error: e?.message ? e.message : String(e) });
+      } finally {
+        hideProgress();
+        isRunning = false;
+        setControlsEnabled(true);
+      }
+    }
+
+    async function runBrowserOnly() {
+      if (isRunning) return;
+      isRunning = true;
+      setControlsEnabled(false);
+      showProgress();
+      setStatus('Running', 'running');
+
+      const warmupCiks = Math.max(0, Math.floor(Number(warmupInput.value || 0)));
+      const measurementCiks = Math.max(1, Math.floor(Number(measurementInput.value || 5)));
+
+      try {
+        const runToken = (globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random()}`).toString();
+        updateProgress(0, 1, 'duckdb-wasm...');
+        const browserRes = await runBrowserBenchmark({ warmupCiks, measurementCiks, runToken });
+        window.benchmarkResults = { runToken, duckdbWasm: browserRes, timestamp: new Date().toISOString() };
+        renderResultsTable([browserRes]);
+        updateHeadlineStats(null, browserRes);
+        setOutput(window.benchmarkResults);
+        setStatus('Ready', 'ready');
+      } catch (e) {
+        setStatus('Error', 'error');
+        log(e?.message ? e.message : String(e), 'error');
+        setOutput({ error: e?.message ? e.message : String(e) });
+      } finally {
+        hideProgress();
+        isRunning = false;
+        setControlsEnabled(true);
+      }
+    }
+
+    async function loadVersionsAndDuckdb() {
+      const t0 = performance.now();
+      try {
+        const res = await fetch(`${SERVER_URL}/api/versions`);
+        if (!res.ok) throw new Error(`Failed to fetch /api/versions (${res.status})`);
+        const versions = await res.json();
+        wasmNpmVersionEl.textContent = versions?.duckdbWasm?.npmVersion ?? 'unknown';
+        nodeNeoVersionEl.textContent = versions?.duckdbNodeNeo?.npmVersion ?? 'unknown';
+
+        const wasmNpm = versions?.duckdbWasm?.npmVersion;
+        if (!wasmNpm) throw new Error('Missing duckdbWasm.npmVersion');
+
+        log(`Loading duckdb-wasm module @ ${wasmNpm}...`, 'dim');
+        const tImportStart = performance.now();
+        duckdb = await import(`https://cdn.jsdelivr.net/npm/@duckdb/duckdb-wasm@${wasmNpm}/+esm`);
+        const importMs = performance.now() - tImportStart;
+        setWasmInitTimings({ importMs });
+        log(`duckdb-wasm module loaded in ${importMs.toFixed(0)}ms`, 'success');
+
+        const totalMs = performance.now() - t0;
+        wasmInitTimingsEl.textContent = `import ${fmt(importMs, 0)}ms · total ${fmt(totalMs, 0)}ms`;
+        await initDuckDB({ importMs });
+      } catch (e) {
+        setStatus('Error', 'error');
+        log(e?.message ? e.message : String(e), 'error');
+      }
     }
 
     // Event listeners
     btnTest.addEventListener('click', testSingleFile);
-    btnBenchmark.addEventListener('click', runBenchmark);
+    btnRunBoth.addEventListener('click', runBoth);
+    btnNative.addEventListener('click', runNativeOnly);
+    btnBrowser.addEventListener('click', runBrowserOnly);
 
     // Initialize
-    initDuckDB();
+    loadVersionsAndDuckdb();
   </script>
 </body>
 </html>

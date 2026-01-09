@@ -8,13 +8,15 @@ A performance benchmarking application that compares **native DuckDB** (via `@du
 # 1. Install dependencies
 bun install
 
-# 2. Run native benchmark (processes all 960 SEC filing files)
-bun run main:native
-
-# 3. Run browser benchmark (opens UI at http://localhost:3000)
-bun run main:server
-# Then open http://localhost:3000 in Chrome and click "Run Full Benchmark"
+# 2. Start the dev server (serves UI + benchmark APIs)
+bun run dev
 ```
+
+Then open `http://localhost:3000` and click **Run Both Benchmarks**. The UI runs:
+- **Native** DuckDB benchmark (node-api) on the server
+- **Browser** DuckDB benchmark (duckdb-wasm) in Chrome
+
+Results render in a single table and are exported to `window.benchmarkResults`.
 
 ## Overview
 
@@ -58,108 +60,20 @@ bun install
 
 ## Running the Application
 
-The application has three operational modes:
-
-### 1. Native Benchmark
-
-Run the benchmark using native DuckDB with direct filesystem access:
-
 ```bash
-# Using npm scripts
-bun run main:native
-
-# Or directly
-bun run src/main.ts --mode=native
-
-# With custom warmup CIKs
-bun run src/main.ts --mode=native --warmup=5
-```
-
-**Output:**
-```
-Native Benchmark Configuration
-   Antigravity source: .../ANTIGRAVITY_FINAL_CLEAN_SCHEMA
-   Verified filings: .../FILINGS_PARQ_MISSING_BATCH_1
-   Total CIKs available: 235
-   Warmup phase: 5 CIKs (results discarded)
-   Measurement phase: 230 CIKs
-
-Benchmark Complete!
-   Files processed: 943
-   Total rows: 177241
-   Duration: 17187.87ms
-   Throughput: 54.86 files/sec
-
-Detection Results:
-   needs-x1000: 0
-   correct: 943
-   unclear: 0
-```
-
-Results are saved to `results/native-{timestamp}.json`.
-
-### 2. Browser Benchmark (Server Mode)
-
-Start an HTTP server for browser-based benchmarking:
-
-```bash
-# Using npm scripts
-bun run main:server
-
-# Or directly
-bun run src/main.ts --mode=server
-
-# With custom port
-bun run src/main.ts --mode=server --port=3000
-```
-
-Then:
-1. Open http://localhost:3000 in Chrome
-2. Wait for DuckDB-WASM to initialize (status shows "Ready")
-3. Click "Test Single File" to verify connectivity
-4. Click "Run Full Benchmark (5 CIKs)" to run the browser benchmark
-5. Results display in the UI and are available via `window.benchmarkResults`
-
-**Browser UI Features:**
-- Real-time progress bar and log
-- Statistics summary (files processed, duration, throughput)
-- Full JSON results export
-
-### 3. Compare Results
-
-Compare native vs browser benchmark results:
-
-```bash
-# Using npm scripts
-bun run main:compare
-
-# Or directly
-bun run src/main.ts --mode=compare
-```
-
-Generates:
-- Console comparison output
-- `results/comparison-{date}.json`
-- `results/comparison-{date}.html` (interactive charts)
-
-## Additional Scripts
-
-```bash
-# Development mode with hot reload
 bun run dev
-
-# Start dev server
-bun run start
-
-# Run CLI interface
-bun run cli
-
-# Run benchmark entry point
-bun run benchmark
-
-# Type checking
-bun run typecheck
 ```
+
+Open `http://localhost:3000` and use the UI:
+- **Run Both Benchmarks**: runs native first, then browser
+- **Run Native Only** / **Run Browser Only**: useful for debugging
+
+### API endpoints (served by `bun run dev`)
+
+- `GET /health`
+- `GET /api/files/antigravity`
+- `GET /data/antigravity/<filename>.parquet`
+- `POST /api/benchmark/native` (JSON body: `{ warmupCiks, measurementCiks }`)
 
 ## Project Structure
 
@@ -171,8 +85,7 @@ claude_tutorial/
 ├── README.md                 # This file
 │
 ├── src/
-│   ├── main.ts               # Main CLI entry point
-│   │
+│   ├── dev.ts                # Dev server entry point (bun run dev)
 │   ├── shared/               # Shared logic (no I/O)
 │   │   ├── types.ts          # Type definitions
 │   │   ├── constants.ts      # Configuration constants
@@ -185,11 +98,12 @@ claude_tutorial/
 │   │   ├── parquet-ops.ts    # File stats and market comparison
 │   │   ├── detection-engine.ts # Detection workflow
 │   │   └── benchmark-runner.ts # Benchmark orchestration
+│   │   └── file-stats-benchmark.ts # Native parquet stats benchmark
 │   │
 │   ├── browser/              # Browser implementation (Chrome + WASM)
 │   │   ├── server.ts         # HTTP server with CORS + Range support
 │   │   └── web/
-│   │       └── index.html    # Benchmark UI with DuckDB-WASM
+│   │       └── index.html    # UI: run both benchmarks + table
 │   │
 │   └── benchmark/            # Benchmark infrastructure
 │       ├── timer.ts          # Precision timing utilities

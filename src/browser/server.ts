@@ -10,8 +10,11 @@
  */
 
 import { BENCHMARK_CONFIG } from '../../benchmark.config';
-import { readdirSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
+import { runNativeFileStatsBenchmark } from '../native/file-stats-benchmark';
+import type { FileStatsBenchmarkSummary } from '../native/file-stats-benchmark';
+import { BenchmarkOrchestrator } from '../benchmark/orchestrator';
 
 export interface BrowserServerOptions {
   port?: number;
@@ -24,6 +27,9 @@ export interface ServerStartResult {
   requestedPort: number;
   portChanged: boolean;
 }
+
+let nativeBenchmarkInFlight: Promise<FileStatsBenchmarkSummary> | null = null;
+const orchestrator = new BenchmarkOrchestrator();
 
 /**
  * Check if a port is available by attempting to create a temporary server
@@ -75,6 +81,7 @@ export async function startBrowserServer(
 
   const server = Bun.serve({
     port,
+    idleTimeout: 240, // Native full benchmarks can take 30-120s; avoid connection timeout (max is 255).
     async fetch(req) {
       const url = new URL(req.url);
 
@@ -82,20 +89,152 @@ export async function startBrowserServer(
         return new Response(null, { status: 204, headers: corsHeaders() });
       }
 
+      if (url.pathname === '/api/versions') {
+        return withCors(Response.json(readVersions()), req);
+      }
+
+      if (url.pathname === '/api/config') {
+        return withCors(Response.json({ ...BENCHMARK_CONFIG, server: { port } }), req);
+      }
+
+      if (url.pathname === '/api/benchmark/native') {
+        if (req.method !== 'POST') {
+          return withCors(new Response('Method not allowed', { status: 405, headers: { allow: 'POST,OPTIONS' } }), req);
+        }
+
+        if (nativeBenchmarkInFlight) {
+          return withCors(Response.json({ error: 'Native benchmark already running' }, { status: 409 }), req);
+        }
+
+        let body: unknown = null;
+        try {
+          body = await req.json();
+        } catch {
+          body = null;
+        }
+
+        const warmupCiks =
+          typeof (body as any)?.warmupCiks === 'number'
+            ? Math.max(0, Math.floor((body as any).warmupCiks))
+            : 0;
+        const measurementCiks =
+          typeof (body as any)?.measurementCiks === 'number'
+            ? Math.max(1, Math.floor((body as any).measurementCiks))
+            : 5;
+        const runToken =
+          typeof (body as any)?.runToken === 'string' && (body as any).runToken.length > 0
+            ? String((body as any).runToken)
+            : String(Date.now());
+
+        const origin = url.origin;
+        nativeBenchmarkInFlight = (async () => {
+          return await runNativeFileStatsBenchmark({
+            warmupCiks,
+            measurementCiks,
+            baseUrl: origin,
+            runToken,
+          });
+        })();
+
+        try {
+          const summary = await nativeBenchmarkInFlight;
+          return withCors(Response.json(summary), req);
+        } catch (e) {
+          const message = e instanceof Error ? e.message : String(e);
+          return withCors(Response.json({ error: message }, { status: 500 }), req);
+        } finally {
+          nativeBenchmarkInFlight = null;
+        }
+      }
+
+      // ==================== CANONICAL FULL BENCHMARK API (3 variants) ====================
+
+      if (url.pathname === '/api/benchmark/native-fs-full' && req.method === 'POST') {
+        try {
+          const result = await orchestrator.runNativeFsFull();
+          return withCors(Response.json({ status: 'success', result }), req);
+        } catch (e) {
+          const message = e instanceof Error ? e.message : String(e);
+          return withCors(Response.json({ status: 'error', message }, { status: 500 }), req);
+        }
+      }
+
+      if (url.pathname === '/api/benchmark/native-http-full' && req.method === 'POST') {
+        try {
+          const body = await req.json().catch(() => ({} as any));
+          const runToken =
+            typeof (body as any)?.runToken === 'string' && (body as any).runToken.length > 0
+              ? String((body as any).runToken)
+              : String(Date.now());
+          const result = await orchestrator.runNativeHttpFull(url.origin, runToken);
+          return withCors(Response.json({ status: 'success', result }), req);
+        } catch (e) {
+          const message = e instanceof Error ? e.message : String(e);
+          return withCors(Response.json({ status: 'error', message }, { status: 500 }), req);
+        }
+      }
+
+      if (url.pathname === '/api/benchmark/wasm-http-full' && req.method === 'POST') {
+        try {
+          const data: unknown = await req.json();
+          if (!data || typeof data !== 'object') {
+            throw new Error('Invalid benchmark result payload');
+          }
+          orchestrator.storeWasmHttpFullResults(data as any);
+          return withCors(Response.json({ status: 'success', stored: true }), req);
+        } catch (e) {
+          const message = e instanceof Error ? e.message : String(e);
+          return withCors(Response.json({ status: 'error', message }, { status: 500 }), req);
+        }
+      }
+
+      if (url.pathname === '/api/benchmark/results' && req.method === 'GET') {
+        const results = orchestrator.getLatestResults();
+        const comparisons = orchestrator.getComparisons();
+        return withCors(Response.json({ ...results, comparisons }), req);
+      }
+
+      if (url.pathname === '/api/benchmark/status' && req.method === 'GET') {
+        const hasResults = orchestrator.hasResults();
+        return withCors(
+          Response.json({
+            nativeRunning: orchestrator.isRunning(),
+            hasNativeFsFullResults: hasResults.nativeFsFull,
+            hasNativeHttpFullResults: hasResults.nativeHttpFull,
+            hasWasmHttpFullResults: hasResults.wasmHttpFull,
+          }),
+          req
+        );
+      }
+
       // Serve web UI files
       if (url.pathname === '/' || url.pathname === '/index.html') {
-        const indexPath = path.join(webDir, 'index.html');
-        const file = Bun.file(indexPath);
-        if (await file.exists()) {
-          return withCors(new Response(file, {
-            headers: { 'content-type': 'text/html; charset=utf-8' }
-          }), req);
+        const unifiedPath = path.join(webDir, 'unified-benchmark.html');
+        const fallbackPath = path.join(webDir, 'index.html');
+        const unified = Bun.file(unifiedPath);
+        if (await unified.exists()) {
+          return withCors(
+            new Response(unified, {
+              headers: { 'content-type': 'text/html; charset=utf-8' },
+            }),
+            req
+          );
         }
+        const file = Bun.file(fallbackPath);
+        if (await file.exists()) {
+          return withCors(
+            new Response(file, {
+              headers: { 'content-type': 'text/html; charset=utf-8' },
+            }),
+            req
+          );
+        }
+        return withCors(new Response('index.html not found', { status: 404 }), req);
       }
 
       // Serve JavaScript files from web directory
       if (url.pathname.endsWith('.js')) {
-        const jsPath = path.join(webDir, url.pathname);
+        const jsPath = path.join(webDir, path.basename(url.pathname));
         const file = Bun.file(jsPath);
         if (await file.exists()) {
           return withCors(new Response(file, {
@@ -174,15 +313,32 @@ if (import.meta.main) {
 }
 
 function withCors(res: Response, _req: Request): Response {
-  const headers = new Headers(res.headers);
-  for (const [k, v] of corsHeaders()) headers.set(k, v);
-  return new Response(res.body, { status: res.status, statusText: res.statusText, headers });
+  // Avoid re-wrapping the response body (especially streams for Range responses).
+  // Re-wrapping can lead to subtle content-length/body mismatches for some clients.
+  for (const [k, v] of corsHeaders()) res.headers.set(k, v);
+  return res;
+}
+
+function readVersions(): {
+  duckdbWasm: { npmVersion: string };
+  duckdbNodeNeo: { npmVersion: string };
+} {
+  const duckdbWasmPkg = path.join(process.cwd(), 'node_modules/@duckdb/duckdb-wasm/package.json');
+  const duckdbNodePkg = path.join(process.cwd(), 'node_modules/@duckdb/node-api/package.json');
+
+  const duckdbWasm = JSON.parse(readFileSync(duckdbWasmPkg, 'utf-8')) as { version?: string };
+  const duckdbNodeNeo = JSON.parse(readFileSync(duckdbNodePkg, 'utf-8')) as { version?: string };
+
+  return {
+    duckdbWasm: { npmVersion: duckdbWasm.version ?? 'unknown' },
+    duckdbNodeNeo: { npmVersion: duckdbNodeNeo.version ?? 'unknown' },
+  };
 }
 
 function corsHeaders(): [string, string][] {
   return [
     ['access-control-allow-origin', '*'],
-    ['access-control-allow-methods', 'GET,HEAD,OPTIONS'],
+    ['access-control-allow-methods', 'GET,HEAD,OPTIONS,POST'],
     ['access-control-allow-headers', 'Range,Content-Type,Accept,Origin'],
     ['access-control-expose-headers', 'Accept-Ranges,Content-Length,Content-Range,Content-Type'],
     ['access-control-max-age', '86400'],

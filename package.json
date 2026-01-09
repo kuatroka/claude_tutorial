@@ -4,17 +4,10 @@
   "type": "module",
   "scripts": {
     "dev": "bun --watch src/dev.ts",
-    "start": "bun run src/dev.ts",
-    "cli": "bun run src/index.ts",
-    "benchmark": "bun run src/benchmark.ts",
-    "main": "bun run src/main.ts",
-    "main:native": "bun run src/main.ts --mode=native",
-    "main:server": "bun run src/main.ts --mode=server",
-    "main:compare": "bun run src/main.ts --mode=compare",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
-    "@duckdb/duckdb-wasm": "^1.29.0",
+    "@duckdb/duckdb-wasm": "1.33.1-dev16.0",
     "@duckdb/node-api": "^1.4.3-r.3",
     "chalk": "^5.3.0",
     "cli-table3": "^0.6.5"
